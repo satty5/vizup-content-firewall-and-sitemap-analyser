@@ -1,0 +1,85 @@
+"""
+Deterministic banned / suspicious phrase lists.
+These are regex-ready patterns matched case-insensitively.
+"""
+
+AI_SLOP_PHRASES: list[str] = [
+    r"in today'?s (?:fast[- ]paced|ever[- ](?:changing|evolving|growing)|digital|modern|competitive|dynamic) (?:landscape|world|era|environment|marketplace|ecosystem)",
+    r"it is important to note that",
+    r"it'?s (?:important|worth|crucial|essential|vital|critical) to (?:note|remember|understand|mention|highlight|emphasize|recognize|acknowledge)",
+    r"businesses? looking to stay ahead",
+    r"this not only helps? .+ but also (?:enables?|allows?|ensures?|provides?|empowers?)",
+    r"from strategy to execution",
+    r"ultimately,? the key (?:is|lies in|to)",
+    r"let'?s (?:dive|delve|explore|unpack|break down|take a (?:closer )?look)",
+    r"without further ado",
+    r"in (?:this|the) (?:comprehensive|ultimate|definitive|complete) guide",
+    r"(?:are you|do you) (?:struggling|looking|trying|wanting|ready) to",
+    r"unlock (?:the (?:full |true )?potential|(?:new|hidden|untapped) (?:potential|opportunities|growth|possibilities))",
+    r"take (?:your|the) .{1,30} to the next level",
+    r"game[- ]?changer",
+    r"at the end of the day",
+    r"the bottom line (?:is|here)",
+    r"in (?:conclusion|summary|a nutshell)",
+    r"navigat(?:e|ing) the (?:complexities?|challenges?|landscape|world|maze)",
+    r"harness(?:ing)? the (?:power|potential|capabilities?) of",
+    r"leverage the (?:power|potential|full potential|capabilities?) of",
+    r"revolutioniz(?:e|ing) (?:the (?:way|how))",
+    r"seamless(?:ly)? integrat(?:e|es|ing|ion)",
+    r"empower(?:s|ing)? (?:you|your|businesses?|teams?|organizations?) to",
+    r"in the realm of",
+    r"(?:a |the )?(?:robust|cutting[- ]edge|state[- ]of[- ]the[- ]art|next[- ]gen(?:eration)?|innovative|groundbreaking|transformative) (?:solution|platform|tool|approach|framework|strategy|methodology)",
+    r"synerg(?:y|ies|ize|istic)",
+    r"holistic (?:approach|solution|strategy|view|perspective)",
+    r"paradigm shift",
+    r"think of it (?:as|like) (?:a |your )",
+    r"(?:imagine|picture) (?:a world|this|a scenario) where",
+    r"whether you'?re (?:a )?(?:small business|startup|enterprise|beginner|expert|seasoned)",
+    r"(?:in |as )(?:we (?:all )?know|you (?:may |might |probably )?know)",
+    r"the (?:truth|reality|fact) (?:is|of the matter)",
+    r"(?:but )?what (?:exactly |really )?(?:is|are|does) .{1,40}\?",
+    r"(?:the )?(?:short |long )?answer is (?:yes|no|simple|clear|obvious)",
+    r"(?:when|where) (?:it )?comes to",
+    r"(?:first and foremost|last but not least)",
+    r"a (?:wide |broad )?(?:range|variety|array|spectrum|plethora|myriad) of",
+    r"(?:offers?|provides?|delivers?) a (?:wide |broad |comprehensive )?(?:range|suite|set|array) of",
+    r"(?:not just|more than just) .{1,30},? but (?:also )?(?:a |an )?",
+    r"stands? out (?:from|among|in) the (?:crowd|competition|rest|pack|market)",
+    r"best[- ]in[- ]class",
+    r"one[- ]stop[- ](?:shop|solution|platform|destination)",
+    r"rest assured",
+    r"the beauty of .{1,30} (?:is|lies in)",
+    r"(?:as |so )?(?:let us|let'?s) (?:get started|begin|jump (?:right )?in)",
+]
+
+ROBOTIC_TRANSITIONS: list[str] = [
+    r"(?:now|next|first|second|third|finally),? let'?s (?:look at|explore|examine|discuss|dive into|turn to|move (?:on )?to|consider|talk about)",
+    r"(?:having|now that we'?ve?) (?:said|established|discussed|explored|covered|understood|examined|looked at) (?:that|this|all (?:of )?that)",
+    r"with (?:that|this|all (?:of )?that) (?:said|in mind|out of the way|covered|established|understood)",
+    r"moving (?:on|forward|ahead) (?:to|,)",
+    r"(?:so|now) (?:,? )?(?:that|,? )?(?:we'?ve |you )?(?:understand|know|covered|seen|established|discussed)",
+    r"speaking of (?:which|that|this)",
+    r"on (?:that|this|a (?:similar|related|different)) note",
+    r"(?:but|and|so) here'?s (?:the (?:thing|deal|catch|kicker|best part)|where (?:it|things) get)",
+]
+
+GENERIC_TRIADS: list[str] = [
+    r"efficiency,?\s+scalability,?\s+and\s+(?:innovation|growth|performance|reliability|security)",
+    r"speed,?\s+quality,?\s+and\s+(?:cost|efficiency|reliability|scalability|performance)",
+    r"people,?\s+process(?:es)?,?\s+and\s+(?:technology|tools?|platforms?)",
+    r"plan(?:ning)?,?\s+execut(?:e|ion),?\s+and\s+(?:measur(?:e|ing|ement)|optimiz(?:e|ation)|monitor(?:ing)?|review(?:ing)?)",
+    r"attract,?\s+engage,?\s+and\s+(?:convert|retain|delight|nurture)",
+    r"awareness,?\s+consideration,?\s+and\s+(?:decision|conversion|purchase|action)",
+    r"visibility,?\s+credibility,?\s+and\s+(?:authority|trust|growth|engagement)",
+]
+
+EMPTY_ABSTRACTIONS: list[str] = [
+    r"(?:it )?(?:is|becomes?) (?:clear|evident|obvious|apparent) that",
+    r"this (?:is|becomes?) (?:increasingly|even more|all the more) (?:important|critical|relevant|crucial|essential|vital)",
+    r"there (?:is|are) (?:no|little) doubt that",
+    r"(?:needless|goes without) (?:to say|saying)",
+    r"(?:it )?goes without saying",
+    r"the importance of .{1,40} cannot be (?:overstated|understated|ignored|denied)",
+    r"plays? (?:a |an )?(?:important|key|crucial|critical|vital|essential|pivotal|significant|major|central) role",
+    r"is (?:a |an )?(?:essential|integral|important|key|crucial|critical|vital|fundamental|indispensable) (?:part|component|element|aspect|factor|piece|ingredient) of",
+]

@@ -1,0 +1,79 @@
+{
+  "company_name": "VizUp",
+  "product_name": "VizUp Organic",
+  "product_description": "AI-powered organic growth platform that drives qualified traffic through SEO content, social distribution, and programmatic pages",
+  "what_product_does": "Generates and distributes SEO-optimized content across channels to drive organic traffic and qualified leads for B2B SaaS companies",
+
+  "icp_description": "B2B SaaS companies doing $1M-$50M ARR who want to build organic traffic without hiring large content teams",
+  "icp_company_size": "SMB to Mid-Market (10-500 employees)",
+  "icp_industry": ["SaaS", "DevTools", "FinTech", "MarTech", "HealthTech"],
+  "icp_job_titles": ["Head of Marketing", "Content Lead", "VP Growth", "Founder", "CMO"],
+  "icp_pain_points": [
+    "Content production is slow and expensive",
+    "SEO results take too long",
+    "Can't compete with enterprise content teams",
+    "Paid acquisition costs keep rising",
+    "Content quality is inconsistent at scale"
+  ],
+  "icp_geography": ["India", "US", "SEA"],
+
+  "brand_voice": "Direct, sharp, zero-fluff. Talk like a growth operator, not a marketing textbook.",
+  "brand_personality": ["bold", "pragmatic", "technical", "opinionated"],
+  "messaging_pillars": [
+    "Organic is the only sustainable growth channel",
+    "AI content needs human-level quality control",
+    "Distribution matters more than production",
+    "Speed without quality is waste"
+  ],
+  "tagline": "Organic Growth, Engineered",
+  "mission": "Make organic growth accessible to every B2B company without requiring enterprise budgets",
+
+  "approved_claims": [
+    "Reduces content production time by 80%",
+    "Multi-channel distribution from single content piece",
+    "SEO-first content architecture"
+  ],
+  "no_go_claims": [
+    "Guaranteed rankings",
+    "Replace your content team entirely",
+    "100% AI-generated content is sufficient",
+    "Organic is free traffic",
+    "Results in 30 days"
+  ],
+  "proof_points": [
+    "Used by 50+ B2B SaaS companies",
+    "Average 3x organic traffic growth in 6 months",
+    "Content quality scores above industry benchmarks"
+  ],
+
+  "competitors": [
+    {"name": "Jasper", "mention_allowed": false, "comparison_allowed": false, "notes": "Direct competitor"},
+    {"name": "SurferSEO", "mention_allowed": false, "comparison_allowed": false, "notes": "SEO optimization competitor"},
+    {"name": "Clearscope", "mention_allowed": false, "comparison_allowed": false, "notes": "Content optimization"},
+    {"name": "MarketMuse", "mention_allowed": false, "comparison_allowed": false, "notes": "Content strategy"},
+    {"name": "Copy.ai", "mention_allowed": false, "comparison_allowed": false, "notes": "AI writing"},
+    {"name": "Writesonic", "mention_allowed": false, "comparison_allowed": false, "notes": "AI writing"},
+    {"name": "Frase", "mention_allowed": false, "comparison_allowed": false, "notes": "SEO content"}
+  ],
+  "banned_competitor_names": ["Jasper", "SurferSEO", "Clearscope", "MarketMuse", "Copy.ai", "Writesonic", "Frase", "Scalenut", "ContentBot", "Rytr"],
+
+  "writing_style": "Short sentences. Active voice. No corporate speak. Concrete over abstract. Show don't tell.",
+  "tone_guidelines": "Confident but not arrogant. Technical but accessible. Opinionated with evidence.",
+  "dos": [
+    "Use specific numbers and examples",
+    "Reference real problems the ICP faces",
+    "Be direct about what works and what doesn't",
+    "Write like you're advising a peer, not lecturing a student"
+  ],
+  "donts": [
+    "Use fluffy intros or generic openings",
+    "Promise guaranteed results",
+    "Compare to competitors by name",
+    "Use corporate jargon or buzzwords",
+    "Write paragraphs longer than 4 sentences"
+  ],
+
+  "funnel_stage": "TOFU/MOFU",
+  "target_action": "Sign up for organic growth audit",
+  "author_pov": "Growth practitioner who has built organic channels from scratch"
+}

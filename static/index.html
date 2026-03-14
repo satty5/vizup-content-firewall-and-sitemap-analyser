@@ -1,0 +1,2315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vizup Soul — Content Quality Firewall</title>
+<style>
+:root {
+  --bg: #0a0a0f;
+  --surface: #12121a;
+  --surface2: #1a1a26;
+  --border: #2a2a3a;
+  --border-hover: #3a3a50;
+  --text: #e4e4ed;
+  --text-dim: #8888a0;
+  --text-muted: #55556a;
+  --accent: #6c5ce7;
+  --accent-glow: rgba(108,92,231,0.15);
+  --red: #ff4757;
+  --red-bg: rgba(255,71,87,0.08);
+  --orange: #ffa502;
+  --orange-bg: rgba(255,165,2,0.08);
+  --green: #2ed573;
+  --green-bg: rgba(46,213,115,0.08);
+  --yellow: #eccc68;
+  --yellow-bg: rgba(236,204,104,0.08);
+  --blue: #70a1ff;
+  --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --radius: 10px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+.app-header {
+  border-bottom: 1px solid var(--border);
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+}
+
+.app-header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.app-header h1 span { color: var(--accent); }
+
+.app-header .subtitle {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-left: 12px;
+}
+
+.header-actions { display: flex; gap: 8px; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: calc(100vh - 57px);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-left { border-right: 1px solid var(--border); }
+
+.panel-header {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.panel-header h2 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.panel-body::-webkit-scrollbar { width: 6px; }
+.panel-body::-webkit-scrollbar-track { background: transparent; }
+.panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.panel-body::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+
+textarea {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 16px;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+textarea:focus { border-color: var(--accent); }
+textarea::placeholder { color: var(--text-muted); }
+
+.content-area { min-height: 250px; }
+.config-area { min-height: 120px; font-size: 12px; }
+
+/* File upload zone */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 10px;
+  position: relative;
+}
+
+.upload-zone:hover { border-color: var(--accent); background: var(--accent-glow); }
+.upload-zone.dragover { border-color: var(--accent); background: var(--accent-glow); }
+
+.upload-zone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.upload-zone-text {
+  font-size: 13px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.upload-zone-text strong { color: var(--accent); }
+
+.upload-zone-formats {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  pointer-events: none;
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.file-info-name {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.file-info-meta {
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.file-info-clear {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.file-info-clear:hover { color: var(--red); }
+
+label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.field-group { margin-bottom: 16px; }
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.btn {
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.btn:hover { border-color: var(--border-hover); background: var(--border); }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: #5b4bd5; }
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-sm { padding: 5px 12px; font-size: 12px; }
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.btn-ghost:hover { color: var(--text); background: var(--surface2); }
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: 10px 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Verdict */
+.verdict-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+}
+
+.verdict-badge {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.verdict-pass { background: var(--green-bg); color: var(--green); border: 1px solid rgba(46,213,115,0.2); }
+.verdict-revisions { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(255,165,2,0.2); }
+.verdict-fail { background: var(--red-bg); color: var(--red); border: 1px solid rgba(255,71,87,0.2); }
+
+.score-display {
+  font-size: 32px;
+  font-weight: 700;
+  font-family: var(--mono);
+  line-height: 1;
+}
+
+.score-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.issue-counts {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.issue-count {
+  text-align: center;
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+
+.issue-count .num {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--mono);
+  display: block;
+}
+
+.issue-count .lbl {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.count-blocker { background: var(--red-bg); color: var(--red); }
+.count-major { background: var(--orange-bg); color: var(--orange); }
+.count-minor { background: var(--yellow-bg); color: var(--yellow); }
+.count-style { color: var(--text-dim); }
+
+/* Issues table */
+.issue-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.issue-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.issue-card-header:hover { background: var(--border); }
+
+.severity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-blocker { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.dot-major { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+.dot-minor { background: var(--yellow); }
+.dot-style { background: var(--text-muted); }
+
+.issue-category {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 200px;
+}
+
+.issue-severity {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.sev-blocker { background: var(--red-bg); color: var(--red); }
+.sev-major { background: var(--orange-bg); color: var(--orange); }
+.sev-minor { background: var(--yellow-bg); color: var(--yellow); }
+.sev-style { color: var(--text-muted); }
+
+.issue-reviewer {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.issue-card-body {
+  display: none;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.issue-card.open .issue-card-body { display: block; }
+
+.issue-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: rgba(255,71,87,0.05);
+  border-left: 3px solid var(--red);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  color: var(--text-dim);
+  border-radius: 0 6px 6px 0;
+  word-break: break-word;
+}
+
+.issue-explain { margin-bottom: 8px; color: var(--text); }
+
+.issue-fix {
+  background: var(--green-bg);
+  border-left: 3px solid var(--green);
+  padding: 8px 12px;
+  border-radius: 0 6px 6px 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* Issue action buttons */
+.issue-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.issue-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: var(--mono);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.issue-action-btn:hover { border-color: var(--border-hover); color: var(--text); }
+.issue-action-btn.done { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+.issue-action-btn.ignored { background: rgba(85,85,106,0.1); border-color: var(--text-muted); color: var(--text-muted); text-decoration: line-through; }
+.issue-card.resolved { opacity: 0.5; }
+.issue-card.resolved .issue-card-header { background: var(--green-bg); }
+.issue-card.issue-ignored .issue-card-header { opacity: 0.4; }
+.issue-status-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: auto;
+}
+.status-implemented { background: var(--green-bg); color: var(--green); }
+.status-ignored { background: rgba(85,85,106,0.1); color: var(--text-muted); }
+
+.issue-meta {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Scores */
+.score-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.score-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.score-item-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  flex: 1;
+  word-break: break-all;
+}
+
+.score-bar-wrap {
+  width: 80px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.score-val {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 36px;
+  text-align: right;
+}
+
+/* Summaries */
+.summary-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.summary-card h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 6px;
+  font-family: var(--mono);
+}
+
+.summary-card p {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+/* Repairs */
+.repair-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--surface2);
+}
+
+.repair-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.repair-before {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--red-bg);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  color: var(--text-dim);
+  text-decoration: line-through;
+  word-break: break-word;
+}
+
+.repair-after {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--green-bg);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.repair-rationale {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* Competitor analysis */
+.competitor-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.competitor-url-input {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--mono);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.competitor-url-input:focus { border-color: var(--accent); }
+.competitor-url-input::placeholder { color: var(--text-muted); }
+.competitor-result {
+  margin-top: 12px;
+  padding: 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.7;
+  display: none;
+}
+.competitor-result.active { display: block; }
+.competitor-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-weight: 600;
+  margin: 3px;
+}
+.competitor-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin: 14px 0 6px;
+}
+.competitor-section-title:first-child { margin-top: 0; }
+.competitor-text { color: var(--text-dim); margin-bottom: 8px; white-space: pre-wrap; }
+
+/* Content Brief */
+.brief-output {
+  display: none;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.brief-output.active { display: block; }
+.brief-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.brief-header h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.brief-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.brief-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  transition: border-color 0.15s;
+}
+.brief-card:hover { border-color: var(--border-hover); }
+.brief-card.full-width { grid-column: 1 / -1; }
+.brief-card-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.brief-card-value {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.brief-card-reasoning {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  font-style: italic;
+  line-height: 1.5;
+}
+.brief-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-weight: 600;
+  border-radius: 6px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  margin: 2px 3px 2px 0;
+}
+.brief-tag-green {
+  background: var(--green-bg);
+  color: var(--green);
+}
+.brief-headline-list {
+  list-style: none;
+  counter-reset: hl;
+}
+.brief-headline-list li {
+  counter-increment: hl;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text);
+}
+.brief-headline-list li:last-child { border-bottom: none; }
+.brief-headline-list li::before {
+  content: counter(hl) ".";
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--accent);
+  margin-right: 8px;
+  font-size: 12px;
+}
+.brief-outline-list {
+  list-style: none;
+  counter-reset: ol-sec;
+}
+.brief-outline-list li {
+  counter-increment: ol-sec;
+  padding: 5px 0;
+  font-size: 13px;
+  color: var(--text);
+  border-left: 2px solid var(--accent);
+  padding-left: 12px;
+  margin-bottom: 4px;
+}
+.brief-outline-list li::before {
+  content: counter(ol-sec);
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--accent);
+  margin-right: 8px;
+  font-size: 11px;
+}
+.brief-component-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.brief-component-row:last-child { border-bottom: none; }
+.brief-check {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.brief-check.yes { background: var(--green-bg); color: var(--green); }
+.brief-check.no { background: rgba(85,85,106,0.1); color: var(--text-muted); }
+.brief-component-name {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 100px;
+}
+.brief-component-reason { color: var(--text-dim); flex: 1; }
+.brief-gap-item {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text);
+  padding-left: 12px;
+  border-left: 2px solid var(--orange);
+}
+.brief-gap-item:last-child { border-bottom: none; }
+.generate-brief-btn {
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-glow);
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: var(--sans);
+}
+.generate-brief-btn:hover { background: var(--accent); color: #fff; border-style: solid; }
+.generate-brief-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Content Compare */
+.compare-inputs {
+  margin-bottom: 16px;
+}
+.compare-url-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.compare-url-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  width: 90px;
+  flex-shrink: 0;
+}
+.compare-url-input {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-family: var(--mono);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text);
+  outline: none;
+}
+.compare-url-input:focus { border-color: var(--accent); }
+.compare-url-input::placeholder { color: var(--text-muted); }
+.compare-run-btn {
+  width: 100%;
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  font-family: var(--sans);
+}
+.compare-run-btn:hover { opacity: 0.9; }
+.compare-run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.compare-results { display: none; }
+.compare-results.active { display: block; }
+
+.compare-overview {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.compare-col {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.compare-col-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.compare-col-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+.compare-col-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+.compare-col.yours { border-color: var(--accent); }
+.compare-col.yours .compare-col-label { color: var(--accent); }
+
+.compare-section {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.compare-section-header {
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background 0.1s;
+}
+.compare-section-header:hover { background: var(--border); }
+.compare-section-body {
+  display: none;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+}
+.compare-section.open .compare-section-body { display: block; }
+.compare-section-verdict {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.verdict-winning { background: var(--green-bg); color: var(--green); }
+.verdict-losing { background: var(--red-bg); color: var(--red); }
+.verdict-tied { background: var(--yellow-bg); color: var(--yellow); }
+
+.compare-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+.compare-detail-cell {
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.compare-detail-cell.yours { border-color: rgba(108,92,231,0.3); }
+.compare-detail-cell-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.compare-action-items {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--accent-glow);
+  border: 1px solid rgba(108,92,231,0.2);
+  border-radius: var(--radius);
+}
+.compare-action-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.compare-action-list {
+  list-style: none;
+}
+.compare-action-list li {
+  padding: 5px 0;
+  font-size: 12px;
+  color: var(--text);
+  border-bottom: 1px solid rgba(108,92,231,0.1);
+  padding-left: 16px;
+  position: relative;
+}
+.compare-action-list li:last-child { border-bottom: none; }
+.compare-action-list li::before {
+  content: "\25B6";
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-size: 8px;
+  top: 7px;
+}
+
+.compare-score-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.compare-score-track {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.compare-score-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.compare-score-val {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 28px;
+  text-align: right;
+}
+.compare-loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+}
+.compare-your-content-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  font-style: italic;
+}
+
+/* Dashboard */
+.dashboard-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+/* Loading */
+.loading-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(10,10,15,0.85);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.loading-overlay.active { display: flex; }
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-text {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+/* Empty */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px;
+}
+
+.empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
+.empty-state p { font-size: 14px; max-width: 320px; line-height: 1.6; }
+
+/* Collapsible configs */
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  padding: 10px 0;
+}
+
+.collapsible-header .arrow {
+  transition: transform 0.2s;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.collapsible.open .arrow { transform: rotate(90deg); }
+.collapsible-body { display: none; }
+.collapsible.open .collapsible-body { display: block; }
+
+/* Filter buttons */
+.filter-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.filter-btn:hover { border-color: var(--border-hover); color: var(--text); }
+.filter-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+
+/* Mode selector */
+.mode-selector {
+  display: flex;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mode-option {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+  border-right: 1px solid var(--border);
+}
+
+.mode-option:last-child { border-right: none; }
+.mode-option:hover { color: var(--text); }
+.mode-option.active { background: var(--accent); color: #fff; }
+
+/* Provider selector */
+.provider-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-selector {
+  display: flex;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.model-option {
+  padding: 7px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.model-option:last-child { border-right: none; }
+.model-option:hover { color: var(--text); }
+.model-option.active { color: #fff; background: var(--accent); }
+.model-option.unavailable { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+
+.provider-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.provider-badge-openai { background: rgba(108,92,231,0.12); color: var(--accent); }
+.provider-badge-anthropic { background: rgba(108,92,231,0.12); color: var(--accent); }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; height: auto; }
+  .panel-left { border-right: none; border-bottom: 1px solid var(--border); }
+  .score-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div style="display:flex;align-items:center;">
+    <h1><span>Vizup Soul</span> — Content Quality Firewall</h1>
+    <span class="subtitle">Editorial Intelligence Layer</span>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-sm btn-ghost" onclick="loadSampleData()">Load Sample</button>
+    <button class="btn btn-sm btn-ghost" onclick="showDashboard()">Root Cause Dashboard</button>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- LEFT PANEL — INPUT -->
+  <div class="panel panel-left">
+    <div class="panel-header">
+      <h2>Content Input</h2>
+      <div class="mode-selector">
+        <div class="mode-option active" data-mode="full" onclick="setMode(this)">Full Review</div>
+        <div class="mode-option" data-mode="quick" onclick="setMode(this)">Quick Scan</div>
+        <div class="mode-option" data-mode="audit" onclick="setMode(this)">Audit + Repairs</div>
+      </div>
+    </div>
+
+    <div class="panel-body">
+      <div class="field-group">
+        <label>Content to Review</label>
+        <div class="upload-zone" id="upload-zone">
+          <input type="file" accept=".md,.txt,.html,.htm,.docx,.pdf" onchange="handleFileUpload(this.files[0])">
+          <div class="upload-zone-text">Drop file here or <strong>click to upload</strong></div>
+          <div class="upload-zone-formats">HTML, DOCX, PDF, Markdown, TXT</div>
+        </div>
+        <div class="file-info" id="file-info" style="display:none;">
+          <span class="file-info-name" id="file-info-name"></span>
+          <span class="file-info-meta" id="file-info-meta"></span>
+          <button class="file-info-clear" onclick="clearUploadedFile()" title="Remove file">&times;</button>
+        </div>
+        <textarea id="content-input" class="content-area" placeholder="Or paste your content here..."></textarea>
+      </div>
+
+      <div class="collapsible open" id="brand-section">
+        <div class="collapsible-header" onclick="toggleCollapsible('brand-section')">
+          <label style="margin:0;cursor:pointer;">Brand Context</label>
+          <span class="arrow">&#9654;</span>
+        </div>
+        <div class="collapsible-body">
+          <textarea id="brand-input" class="config-area" placeholder='Describe your brand, product, ICP, and competitors here — plain text or JSON both work.'></textarea>
+          <div style="margin-top:6px;display:flex;gap:6px;">
+            <button class="btn btn-sm btn-ghost" onclick="loadSampleBrand()">Load Sample</button>
+            <label class="btn btn-sm btn-ghost" style="margin:0;">
+              Upload JSON
+              <input type="file" accept=".json" style="display:none" onchange="uploadJSON(this, 'brand-input')">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="collapsible" id="brief-section">
+        <div class="collapsible-header" onclick="toggleCollapsible('brief-section')">
+          <label style="margin:0;cursor:pointer;">Content Brief (optional)</label>
+          <span class="arrow">&#9654;</span>
+        </div>
+        <div class="collapsible-body">
+          <textarea id="brief-input" class="config-area" placeholder='{"target_keyword": "...", "topic": "...", ...}'></textarea>
+          <div style="margin-top:6px;display:flex;gap:6px;">
+            <button class="btn btn-sm btn-ghost" onclick="loadSampleBrief()">Load Sample</button>
+            <label class="btn btn-sm btn-ghost" style="margin:0;">
+              Upload JSON
+              <input type="file" accept=".json" style="display:none" onchange="uploadJSON(this, 'brief-input')">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="collapsible" id="competitor-section">
+        <div class="collapsible-header" onclick="toggleCollapsible('competitor-section')">
+          <label style="margin:0;cursor:pointer;">Competitor / SERP Analysis (optional)</label>
+          <span class="arrow">&#9654;</span>
+        </div>
+        <div class="collapsible-body">
+          <div class="competitor-input-row">
+            <input type="text" class="competitor-url-input" id="competitor-url" placeholder="https://competitor-article-url.com/blog/post">
+            <button class="btn btn-sm btn-primary" id="competitor-analyze-btn" onclick="analyzeCompetitor()">Analyze</button>
+          </div>
+          <div class="competitor-result" id="competitor-result"></div>
+          <button class="generate-brief-btn" id="generate-brief-btn" style="display:none;" onclick="generateContentBrief()">
+            Generate Content Creation Brief from Analysis
+          </button>
+          <div class="brief-output" id="brief-output"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <div class="model-selector" id="model-selector"></div>
+      <button id="run-btn" class="btn btn-primary" onclick="runReview()" style="flex:1;">
+        Run Firewall Review
+      </button>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL — RESULTS -->
+  <div class="panel panel-right">
+    <div class="tabs" id="result-tabs">
+      <div class="tab active" data-tab="issues" onclick="switchTab(this)">Issues</div>
+      <div class="tab" data-tab="scores" onclick="switchTab(this)">Scores</div>
+      <div class="tab" data-tab="summaries" onclick="switchTab(this)">Summaries</div>
+      <div class="tab" data-tab="repairs" onclick="switchTab(this)">Repairs</div>
+      <div class="tab" data-tab="compare" onclick="switchTab(this)">Compare</div>
+    </div>
+
+    <div class="panel-body" id="results-body">
+      <div id="empty-state" class="empty-state">
+        <div class="icon">&#9632;</div>
+        <p>Paste content, set up brand context, and run the firewall. Results will appear here.</p>
+      </div>
+
+      <div id="results-content" style="display:none;">
+        <div id="verdict-bar" class="verdict-bar" style="display:none;"></div>
+
+        <div id="tab-issues" class="tab-content active">
+          <div class="filter-bar" id="filter-bar"></div>
+          <div id="issue-progress" style="padding:4px 0;"></div>
+          <div id="issues-list"></div>
+        </div>
+
+        <div id="tab-scores" class="tab-content">
+          <div class="score-grid" id="scores-grid"></div>
+        </div>
+
+        <div id="tab-summaries" class="tab-content">
+          <div id="summaries-list"></div>
+        </div>
+
+        <div id="tab-repairs" class="tab-content">
+          <div id="repairs-list"></div>
+        </div>
+
+        <div id="tab-compare" class="tab-content">
+          <div class="compare-inputs">
+            <div class="compare-your-content-note">Your content is taken from the Content Input panel on the left. Upload or paste it there first.</div>
+            <div class="compare-url-row">
+              <span class="compare-url-label">Competitor 1</span>
+              <input type="text" class="compare-url-input" id="compare-url-1" placeholder="https://competitor-1-ranking-article.com/...">
+            </div>
+            <div class="compare-url-row">
+              <span class="compare-url-label">Competitor 2</span>
+              <input type="text" class="compare-url-input" id="compare-url-2" placeholder="https://competitor-2-ranking-article.com/...">
+            </div>
+            <button class="compare-run-btn" id="compare-run-btn" onclick="runComparison()">
+              Run Deep Comparison
+            </button>
+          </div>
+          <div class="compare-results" id="compare-results"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loading-text">Running 6 review layers...</div>
+</div>
+
+<!-- Dashboard modal -->
+<div class="loading-overlay" id="dashboard-modal" onclick="closeDashboard(event)">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto;padding:24px;" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h2 style="font-size:16px;">Root Cause Dashboard</h2>
+      <button class="btn btn-sm btn-ghost" onclick="closeDashboard()">Close</button>
+    </div>
+    <div id="dashboard-content" class="dashboard-text">Loading...</div>
+  </div>
+</div>
+
+<script>
+let currentMode = 'full';
+let currentModel = 'gpt-5.2';
+let allModels = [];
+let currentResult = null;
+let activeFilter = 'all';
+let issueStates = {};
+let lastCompetitorAnalysis = null;
+let lastCompetitorContent = '';
+
+async function initModels() {
+  try {
+    const res = await fetch('/api/models');
+    const data = await res.json();
+    allModels = data.models || [];
+    currentModel = data.default || 'gpt-5-2';
+    renderModelSelector();
+  } catch (err) {
+    console.error('Failed to load models:', err);
+  }
+}
+
+function renderModelSelector() {
+  const container = document.getElementById('model-selector');
+  container.innerHTML = allModels.map(m => {
+    const classes = ['model-option'];
+    if (m.id === currentModel) classes.push('active');
+    if (!m.available) classes.push('unavailable');
+    return `<div class="${classes.join(' ')}" data-model="${m.id}" data-provider="${m.provider}" onclick="selectModel('${m.id}')" title="${m.available ? m.name + ' (' + m.id + ')' : 'No API key configured'}">${m.name}</div>`;
+  }).join('');
+}
+
+function selectModel(modelId) {
+  const model = allModels.find(m => m.id === modelId);
+  if (!model || !model.available) return;
+  currentModel = modelId;
+  document.querySelectorAll('.model-option').forEach(el => {
+    el.classList.toggle('active', el.dataset.model === modelId);
+  });
+}
+
+function getModelInfo(modelId) {
+  return allModels.find(m => m.id === modelId) || { id: modelId, name: modelId, provider: 'unknown' };
+}
+
+function setMode(el) {
+  document.querySelectorAll('.mode-option').forEach(m => m.classList.remove('active'));
+  el.classList.add('active');
+  currentMode = el.dataset.mode;
+  const btn = document.getElementById('run-btn');
+  const labels = { full: 'Run Full Review', quick: 'Run Quick Scan', audit: 'Run Audit + Repairs' };
+  btn.textContent = labels[currentMode];
+}
+
+async function handleFileUpload(file) {
+  if (!file) return;
+
+  const ext = '.' + file.name.split('.').pop().toLowerCase();
+  const allowed = ['.md', '.txt', '.html', '.htm', '.docx', '.pdf'];
+  if (!allowed.includes(ext)) {
+    alert('Unsupported file type: ' + ext + '\nSupported: ' + allowed.join(', '));
+    return;
+  }
+
+  const info = document.getElementById('file-info');
+  const nameEl = document.getElementById('file-info-name');
+  const metaEl = document.getElementById('file-info-meta');
+
+  nameEl.textContent = file.name;
+  metaEl.textContent = 'Parsing...';
+  info.style.display = 'flex';
+
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch('/api/upload', { method: 'POST', body: form });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Upload failed');
+    }
+
+    const data = await res.json();
+    document.getElementById('content-input').value = data.content;
+    metaEl.textContent = `${data.word_count.toLocaleString()} words · ${data.file_type}`;
+  } catch (err) {
+    alert('File parsing failed: ' + err.message);
+    info.style.display = 'none';
+  }
+}
+
+function clearUploadedFile() {
+  document.getElementById('file-info').style.display = 'none';
+  document.getElementById('content-input').value = '';
+  const fileInput = document.querySelector('#upload-zone input[type="file"]');
+  if (fileInput) fileInput.value = '';
+}
+
+function initDragDrop() {
+  const zone = document.getElementById('upload-zone');
+
+  ['dragenter', 'dragover'].forEach(evt => {
+    zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('dragover'); });
+  });
+  ['dragleave', 'drop'].forEach(evt => {
+    zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('dragover'); });
+  });
+  zone.addEventListener('drop', e => {
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleFileUpload(file);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initModels();
+  initDragDrop();
+});
+
+function toggleCollapsible(id) {
+  document.getElementById(id).classList.toggle('open');
+}
+
+function switchTab(el) {
+  const tab = el.dataset.tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  if (tab === 'compare') {
+    document.getElementById('results-content').style.display = 'block';
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('verdict-bar').style.display = 'none';
+  }
+}
+
+function uploadJSON(input, targetId) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById(targetId).value = e.target.result;
+  };
+  reader.readAsText(file);
+}
+
+async function loadSampleBrand() {
+  const res = await fetch('/api/sample-brand');
+  const data = await res.json();
+  document.getElementById('brand-input').value = JSON.stringify(data, null, 2);
+}
+
+async function loadSampleBrief() {
+  const res = await fetch('/api/sample-brief');
+  const data = await res.json();
+  document.getElementById('brief-input').value = JSON.stringify(data, null, 2);
+  document.getElementById('brief-section').classList.add('open');
+}
+
+async function loadSampleData() {
+  const [brandRes, briefRes, contentRes] = await Promise.all([
+    fetch('/api/sample-brand'),
+    fetch('/api/sample-brief'),
+    fetch('/api/sample-content'),
+  ]);
+  const brand = await brandRes.json();
+  const brief = await briefRes.json();
+  const content = await contentRes.json();
+  document.getElementById('brand-input').value = JSON.stringify(brand, null, 2);
+  document.getElementById('brief-input').value = JSON.stringify(brief, null, 2);
+  document.getElementById('content-input').value = content.content;
+  document.getElementById('brief-section').classList.add('open');
+}
+
+async function runReview() {
+  const content = document.getElementById('content-input').value.trim();
+  const brandStr = document.getElementById('brand-input').value.trim();
+  const briefStr = document.getElementById('brief-input').value.trim();
+
+  if (!content) return alert('Paste some content to review.');
+  if (!brandStr) return alert('Brand context is required. Load sample or enter your brand description.');
+
+  const loading = document.getElementById('loading');
+  const loadingText = document.getElementById('loading-text');
+  const modelInfo = getModelInfo(currentModel);
+  const modeLabels = {
+    full: `Running 6 review layers via ${modelInfo.name}...`,
+    quick: `Running quick scan via ${modelInfo.name}...`,
+    audit: `Running full audit + repairs via ${modelInfo.name}...`,
+  };
+  loadingText.textContent = modeLabels[currentMode];
+  loading.classList.add('active');
+
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+
+  issueStates = {};
+
+  try {
+    const form = new FormData();
+    form.append('content', content);
+    form.append('brand_context_json', brandStr);
+    form.append('brief_json', briefStr);
+    form.append('mode', currentMode);
+    form.append('model', currentModel);
+
+    const res = await fetch('/api/review', { method: 'POST', body: form });
+    currentResult = await res.json();
+    renderResults(currentResult);
+  } catch (err) {
+    alert('Review failed: ' + err.message);
+  } finally {
+    loading.classList.remove('active');
+    btn.disabled = false;
+  }
+}
+
+function renderResults(data) {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('results-content').style.display = 'block';
+
+  renderVerdict(data);
+  renderIssues(data.issues || []);
+  renderScores(data.score_breakdown || {});
+  renderSummaries(data.reviewer_summaries || {});
+  renderRepairs(data.repairs);
+
+  switchTab(document.querySelector('.tab[data-tab="issues"]'));
+}
+
+function renderVerdict(data) {
+  const bar = document.getElementById('verdict-bar');
+  bar.style.display = 'flex';
+
+  const badgeClass = {
+    pass: 'verdict-pass',
+    pass_with_revisions: 'verdict-revisions',
+    fail: 'verdict-fail',
+  }[data.decision] || 'verdict-fail';
+
+  const badgeLabel = {
+    pass: 'Pass',
+    pass_with_revisions: 'Revise',
+    fail: 'Fail',
+  }[data.decision] || data.decision;
+
+  const scoreColor = data.overall_score >= 70 ? 'var(--green)' : data.overall_score >= 40 ? 'var(--orange)' : 'var(--red)';
+
+  const modelUsed = data.model_used || currentModel;
+  const modelMeta = getModelInfo(modelUsed);
+  const providerBadgeClass = modelMeta.provider === 'anthropic' ? 'provider-badge-anthropic' : 'provider-badge-openai';
+
+  bar.innerHTML = `
+    <div class="verdict-badge ${badgeClass}">${badgeLabel}</div>
+    <div>
+      <div class="score-display" style="color:${scoreColor}">${data.overall_score}</div>
+      <div class="score-label">Score</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
+      <span class="provider-badge ${providerBadgeClass}">${modelMeta.name}</span>
+      <span style="font-size:10px;color:var(--text-muted);font-family:var(--mono);">${modelUsed}</span>
+    </div>
+    <div class="issue-counts">
+      <div class="issue-count count-blocker"><span class="num">${data.blocker_count}</span><span class="lbl">Blockers</span></div>
+      <div class="issue-count count-major"><span class="num">${data.major_count}</span><span class="lbl">Major</span></div>
+      <div class="issue-count count-minor"><span class="num">${data.minor_count}</span><span class="lbl">Minor</span></div>
+      <div class="issue-count count-style"><span class="num">${data.style_count}</span><span class="lbl">Style</span></div>
+    </div>
+  `;
+}
+
+function renderIssues(issues) {
+  const filterBar = document.getElementById('filter-bar');
+  const list = document.getElementById('issues-list');
+
+  const sevCounts = { all: issues.length, blocker: 0, major: 0, minor: 0, style: 0 };
+  issues.forEach(i => { sevCounts[i.severity] = (sevCounts[i.severity] || 0) + 1; });
+
+  filterBar.innerHTML = ['all', 'blocker', 'major', 'minor', 'style']
+    .filter(s => sevCounts[s] > 0)
+    .map(s => `<button class="filter-btn ${s === 'all' ? 'active' : ''}" onclick="filterIssues('${s}', this)">${s} (${sevCounts[s]})</button>`)
+    .join('');
+
+  activeFilter = 'all';
+  renderIssueCards(issues);
+}
+
+function filterIssues(severity, btn) {
+  activeFilter = severity;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderIssueCards(currentResult.issues || []);
+}
+
+function renderIssueCards(issues) {
+  const list = document.getElementById('issues-list');
+  const filtered = activeFilter === 'all' ? issues : issues.filter(i => i.severity === activeFilter);
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px;">No issues found.</p>';
+    return;
+  }
+
+  list.innerHTML = filtered.map((issue, idx) => {
+    const issueKey = `${issue.category}_${issue.severity}_${idx}`;
+    const state = issueStates[issueKey] || 'open';
+    const dotClass = { blocker: 'dot-blocker', major: 'dot-major', minor: 'dot-minor', style: 'dot-style' }[issue.severity] || '';
+    const sevClass = { blocker: 'sev-blocker', major: 'sev-major', minor: 'sev-minor', style: 'sev-style' }[issue.severity] || '';
+    const cardClass = state === 'implemented' ? 'resolved' : state === 'ignored' ? 'issue-ignored' : '';
+    const statusBadge = state === 'implemented'
+      ? '<span class="issue-status-badge status-implemented">Implemented</span>'
+      : state === 'ignored'
+      ? '<span class="issue-status-badge status-ignored">Ignored</span>'
+      : '';
+
+    return `
+      <div class="issue-card ${cardClass}" id="issue-${idx}">
+        <div class="issue-card-header" onclick="document.getElementById('issue-${idx}').classList.toggle('open')">
+          <div class="severity-dot ${dotClass}"></div>
+          <span class="issue-category">${issue.category}</span>
+          <span class="issue-severity ${sevClass}">${issue.severity}</span>
+          ${statusBadge}
+          <span class="issue-reviewer">${issue.reviewer || ''}</span>
+        </div>
+        <div class="issue-card-body">
+          ${issue.line_text ? `<div class="issue-text">${escHtml(issue.line_text)}</div>` : ''}
+          <div class="issue-explain">${escHtml(issue.explanation)}</div>
+          ${issue.suggested_fix ? `<div class="repair-label" style="margin-top:10px;">Suggested Fix</div><div class="issue-fix">${escHtml(issue.suggested_fix)}</div>` : ''}
+          <div class="issue-meta">
+            ${issue.line_number ? `<span>Line ${issue.line_number}</span>` : ''}
+            ${issue.section ? `<span>Section: ${escHtml(issue.section)}</span>` : ''}
+            <span>Confidence: ${Math.round((issue.confidence || 0) * 100)}%</span>
+          </div>
+          <div class="issue-actions">
+            <button class="issue-action-btn ${state === 'implemented' ? 'done' : ''}" onclick="event.stopPropagation(); markIssue('${issueKey}', 'implemented', ${idx})">
+              &#10003; ${state === 'implemented' ? 'Implemented' : 'Mark Implemented'}
+            </button>
+            <button class="issue-action-btn ${state === 'ignored' ? 'ignored' : ''}" onclick="event.stopPropagation(); markIssue('${issueKey}', 'ignored', ${idx})">
+              &#10005; ${state === 'ignored' ? 'Ignored' : 'Ignore'}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderScores(breakdown) {
+  const grid = document.getElementById('scores-grid');
+  const entries = Object.entries(breakdown);
+
+  if (entries.length === 0) {
+    grid.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px;grid-column:1/-1;">No score data yet.</p>';
+    return;
+  }
+
+  grid.innerHTML = entries.map(([key, val]) => {
+    const isInverse = key.includes('slop') || key.includes('robotic') || key.includes('template') || key.includes('repetition') || key.includes('imposition');
+    const displayVal = typeof val === 'number' && val <= 1 ? val : val;
+    const pct = typeof val === 'number' && val <= 1 ? val * 100 : Math.min(val, 100);
+    const color = isInverse
+      ? (pct <= 30 ? 'var(--green)' : pct <= 60 ? 'var(--orange)' : 'var(--red)')
+      : (pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--orange)' : 'var(--red)');
+
+    const label = key.replace(/^[^.]+\./, '').replace(/_/g, ' ');
+
+    return `
+      <div class="score-item">
+        <span class="score-item-label">${label}</span>
+        <div class="score-bar-wrap">
+          <div class="score-bar-fill" style="width:${pct}%;background:${color}"></div>
+        </div>
+        <span class="score-val" style="color:${color}">${typeof displayVal === 'number' ? displayVal.toFixed(2) : displayVal}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderSummaries(summaries) {
+  const list = document.getElementById('summaries-list');
+  const entries = Object.entries(summaries);
+
+  if (entries.length === 0) {
+    list.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px;">No summaries available.</p>';
+    return;
+  }
+
+  list.innerHTML = entries.map(([reviewer, summary]) => `
+    <div class="summary-card">
+      <h4>${reviewer.replace(/_/g, ' ')}</h4>
+      <p>${escHtml(summary)}</p>
+    </div>
+  `).join('');
+}
+
+function renderRepairs(repairs) {
+  const list = document.getElementById('repairs-list');
+
+  if (!repairs || (!repairs.repairs?.length && !repairs.unrepairable?.length)) {
+    const msg = currentMode !== 'audit'
+      ? 'Run in "Audit + Repairs" mode to get targeted fix suggestions.'
+      : 'No repairs needed or content passed review.';
+    list.innerHTML = `<p style="color:var(--text-muted);text-align:center;padding:40px;">${msg}</p>`;
+    return;
+  }
+
+  let html = '';
+
+  if (repairs.repairs?.length) {
+    html += repairs.repairs.map(r => `
+      <div class="repair-card">
+        <div class="repair-label">Category: ${r.issue_category || 'Unknown'}</div>
+        <div class="repair-label" style="margin-top:8px;">Before</div>
+        <div class="repair-before">${escHtml(r.original_text || '')}</div>
+        <div class="repair-label">After</div>
+        <div class="repair-after">${r.repaired_text ? escHtml(r.repaired_text) : '<em style="color:var(--red);">DELETE</em>'}</div>
+        ${r.repair_rationale ? `<div class="repair-rationale">${escHtml(r.repair_rationale)}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  if (repairs.unrepairable?.length) {
+    html += '<h3 style="font-size:13px;color:var(--orange);margin:20px 0 10px;">Needs Human Intervention</h3>';
+    html += repairs.unrepairable.map(u => `
+      <div class="repair-card" style="border-color:var(--orange);">
+        <div class="repair-before" style="text-decoration:none;">${escHtml(u.original_text || '')}</div>
+        <div class="repair-rationale">${escHtml(u.reason || '')}</div>
+      </div>
+    `).join('');
+  }
+
+  if (repairs.summary) {
+    html += `<div class="summary-card" style="margin-top:16px;"><p>${escHtml(repairs.summary)}</p></div>`;
+  }
+
+  list.innerHTML = html;
+}
+
+async function showDashboard() {
+  const modal = document.getElementById('dashboard-modal');
+  const content = document.getElementById('dashboard-content');
+  modal.classList.add('active');
+  content.textContent = 'Loading...';
+  try {
+    const res = await fetch('/api/dashboard');
+    const data = await res.json();
+    content.textContent = data.text;
+  } catch (err) {
+    content.textContent = 'Failed to load dashboard: ' + err.message;
+  }
+}
+
+function closeDashboard(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('dashboard-modal').classList.remove('active');
+}
+
+function markIssue(issueKey, action, idx) {
+  const current = issueStates[issueKey];
+  if (current === action) {
+    delete issueStates[issueKey];
+  } else {
+    issueStates[issueKey] = action;
+  }
+  renderIssueCards(currentResult.issues || []);
+  updateIssueCounts();
+}
+
+function updateIssueCounts() {
+  if (!currentResult) return;
+  const issues = currentResult.issues || [];
+  let implemented = 0, ignored = 0, remaining = 0;
+  issues.forEach((issue, idx) => {
+    const key = `${issue.category}_${issue.severity}_${idx}`;
+    const s = issueStates[key];
+    if (s === 'implemented') implemented++;
+    else if (s === 'ignored') ignored++;
+    else remaining++;
+  });
+  const summary = document.getElementById('issue-progress');
+  if (summary) {
+    summary.innerHTML = remaining > 0
+      ? `<span style="color:var(--text-dim);font-size:11px;">${implemented} implemented · ${ignored} ignored · ${remaining} remaining</span>`
+      : `<span style="color:var(--green);font-size:11px;">All ${issues.length} issues addressed</span>`;
+  }
+}
+
+async function analyzeCompetitor() {
+  const url = document.getElementById('competitor-url').value.trim();
+  if (!url) return alert('Enter a competitor article URL.');
+  if (!url.startsWith('http')) return alert('Enter a valid URL starting with http:// or https://');
+
+  const btn = document.getElementById('competitor-analyze-btn');
+  const result = document.getElementById('competitor-result');
+  btn.disabled = true;
+  btn.textContent = 'Analyzing...';
+  result.classList.add('active');
+  result.innerHTML = '<div style="color:var(--text-muted);padding:12px;">Fetching and analyzing competitor content... this may take a moment.</div>';
+
+  try {
+    const form = new FormData();
+    form.append('url', url);
+    form.append('model', currentModel);
+    const res = await fetch('/api/competitor-analysis', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Analysis failed');
+    }
+    const data = await res.json();
+    lastCompetitorAnalysis = data;
+    renderCompetitorResult(data);
+    document.getElementById('generate-brief-btn').style.display = 'block';
+  } catch (err) {
+    result.innerHTML = `<div style="color:var(--red);padding:12px;">Analysis failed: ${escHtml(err.message)}</div>`;
+    document.getElementById('generate-brief-btn').style.display = 'none';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Analyze';
+  }
+}
+
+function renderCompetitorResult(data) {
+  const result = document.getElementById('competitor-result');
+  const aiColor = data.ai_probability > 0.6 ? 'var(--red)' : data.ai_probability > 0.3 ? 'var(--orange)' : 'var(--green)';
+  const aiLabel = data.ai_probability > 0.6 ? 'Likely AI' : data.ai_probability > 0.3 ? 'Mixed' : 'Likely Human';
+
+  result.innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+      <span class="competitor-metric" style="background:${aiColor}22;color:${aiColor};">${aiLabel} — ${Math.round(data.ai_probability * 100)}%</span>
+      <span class="competitor-metric" style="background:var(--accent-glow);color:var(--accent);">${data.word_count} words</span>
+      <span class="competitor-metric" style="background:var(--blue)22;color:var(--blue);">${data.reading_level || 'N/A'} reading level</span>
+    </div>
+
+    <div class="competitor-section-title">Search Intent & Content Strategy</div>
+    <div class="competitor-text">${escHtml(data.search_intent || '')}</div>
+
+    <div class="competitor-section-title">Writing Style & Patterns</div>
+    <div class="competitor-text">${escHtml(data.writing_style || '')}</div>
+
+    <div class="competitor-section-title">Content Structure</div>
+    <div class="competitor-text">${escHtml(data.structure_analysis || '')}</div>
+
+    <div class="competitor-section-title">AI Detection Analysis</div>
+    <div class="competitor-text">${escHtml(data.ai_analysis || '')}</div>
+
+    <div class="competitor-section-title">Key Takeaways for Your Content</div>
+    <div class="competitor-text">${escHtml(data.recommendations || '')}</div>
+  `;
+}
+
+async function generateContentBrief() {
+  const btn = document.getElementById('generate-brief-btn');
+  const output = document.getElementById('brief-output');
+  const brandStr = document.getElementById('brand-input').value.trim();
+  const url = document.getElementById('competitor-url').value.trim();
+
+  btn.disabled = true;
+  btn.textContent = 'Generating content brief...';
+  output.classList.add('active');
+  output.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Analyzing competitor patterns and generating your content creation brief...</div>';
+
+  try {
+    const form = new FormData();
+    form.append('competitor_url', url);
+    form.append('competitor_analysis_json', JSON.stringify(lastCompetitorAnalysis || {}));
+    form.append('brand_context_text', brandStr);
+    form.append('model', currentModel);
+
+    const res = await fetch('/api/generate-content-brief', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Brief generation failed');
+    }
+    const data = await res.json();
+    renderContentBrief(data);
+  } catch (err) {
+    output.innerHTML = `<div style="color:var(--red);padding:20px;">Failed: ${escHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Regenerate Content Brief';
+  }
+}
+
+function renderContentBrief(b) {
+  const output = document.getElementById('brief-output');
+  const goalLabels = {
+    educate_inform: 'Educate & Inform',
+    thought_leadership: 'Build Thought Leadership',
+    drive_organic_traffic: 'Drive Organic Traffic',
+    showcase_results: 'Showcase Results',
+    compare_evaluate: 'Compare & Evaluate',
+    generate_leads: 'Generate Leads',
+  };
+  const natureLabels = {
+    how_to: 'How-To',
+    what_is: 'What Is',
+    listicle: 'Listicle',
+    comparison: 'Comparison',
+    guide: 'Guide',
+    case_study: 'Case Study',
+    review: 'Review',
+    opinion: 'Opinion',
+    alternative: 'Alternative',
+  };
+  const toneLabels = {
+    professional: 'Professional',
+    conversational: 'Conversational',
+    technical: 'Technical',
+    founder_voice: 'Founder Voice',
+    authoritative: 'Authoritative',
+    friendly_approachable: 'Friendly & Approachable',
+  };
+  const depthLabels = {
+    short_500_800: 'Short (500–800 words)',
+    medium_1000_1500: 'Medium (1,000–1,500 words)',
+    long_1500_3000: 'Long (1,500–3,000 words)',
+    deep_dive_3000_plus: 'Deep Dive (3,000+ words)',
+  };
+  const formatLabels = {
+    narrative: 'Narrative',
+    step_by_step: 'Step-by-Step',
+    qa_format: 'Q&A Format',
+    hybrid: 'Hybrid',
+  };
+
+  const comp = b.components || {};
+  const componentRows = [
+    ['FAQ Section', comp.include_faq, comp.faq_reasoning],
+    ['Table / Comparison Matrix', comp.include_table, comp.table_reasoning],
+    ['Embed Placeholders', comp.include_embeds, comp.embed_reasoning],
+    ['Proof Block', comp.include_proof_block, comp.proof_reasoning],
+    ['Callouts', comp.include_callouts, comp.callout_reasoning],
+    ['CTAs', comp.include_ctas, comp.cta_reasoning],
+    ['Images', comp.include_images, comp.image_reasoning],
+  ];
+
+  output.innerHTML = `
+    <div class="brief-header">
+      <h3>Content Creation Brief</h3>
+      <span style="font-size:11px;color:var(--text-muted);font-family:var(--mono);">via ${b.model_used || currentModel}</span>
+    </div>
+
+    <div class="brief-grid">
+      <div class="brief-card">
+        <div class="brief-card-label">Page Kind</div>
+        <div class="brief-card-value"><span class="brief-tag">${b.page_kind === 'landing_page' ? 'Landing Page' : 'Blog Post'}</span></div>
+        ${b.page_kind_reasoning ? `<div class="brief-card-reasoning">${escHtml(b.page_kind_reasoning)}</div>` : ''}
+      </div>
+      <div class="brief-card">
+        <div class="brief-card-label">Content Goal</div>
+        <div class="brief-card-value"><span class="brief-tag">${goalLabels[b.content_goal] || b.content_goal}</span></div>
+        ${b.content_goal_reasoning ? `<div class="brief-card-reasoning">${escHtml(b.content_goal_reasoning)}</div>` : ''}
+      </div>
+      <div class="brief-card">
+        <div class="brief-card-label">Content Nature</div>
+        <div class="brief-card-value"><span class="brief-tag">${natureLabels[b.content_nature] || b.content_nature}</span></div>
+        ${b.content_nature_reasoning ? `<div class="brief-card-reasoning">${escHtml(b.content_nature_reasoning)}</div>` : ''}
+      </div>
+      <div class="brief-card">
+        <div class="brief-card-label">Tonality</div>
+        <div class="brief-card-value"><span class="brief-tag">${toneLabels[b.tonality] || b.tonality}</span></div>
+        ${b.tonality_reasoning ? `<div class="brief-card-reasoning">${escHtml(b.tonality_reasoning)}</div>` : ''}
+      </div>
+      <div class="brief-card">
+        <div class="brief-card-label">Depth / Word Count</div>
+        <div class="brief-card-value"><span class="brief-tag">${depthLabels[b.depth_word_count] || b.depth_word_count}</span></div>
+        ${b.depth_reasoning ? `<div class="brief-card-reasoning">${escHtml(b.depth_reasoning)}</div>` : ''}
+      </div>
+      <div class="brief-card">
+        <div class="brief-card-label">Reading Format</div>
+        <div class="brief-card-value"><span class="brief-tag">${formatLabels[b.reading_format] || b.reading_format}</span></div>
+        ${b.reading_format_reasoning ? `<div class="brief-card-reasoning">${escHtml(b.reading_format_reasoning)}</div>` : ''}
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Primary Keyword</div>
+        <div class="brief-card-value" style="font-size:16px;font-weight:700;color:var(--accent);">${escHtml(b.primary_keyword || '')}</div>
+        ${b.primary_keyword_reasoning ? `<div class="brief-card-reasoning">${escHtml(b.primary_keyword_reasoning)}</div>` : ''}
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Secondary Keywords</div>
+        <div class="brief-card-value">
+          ${(b.secondary_keywords || []).map(k => `<span class="brief-tag brief-tag-green">${escHtml(k)}</span>`).join('')}
+        </div>
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Theme / Category</div>
+        <div class="brief-card-value">${escHtml(b.theme_category || '')}</div>
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Headline Recommendations</div>
+        <div class="brief-card-value">
+          <ol class="brief-headline-list">
+            ${(b.headline_recommendations || []).map(h => `<li>${escHtml(h)}</li>`).join('')}
+          </ol>
+        </div>
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Suggested Outline</div>
+        <div class="brief-card-value">
+          <ul class="brief-outline-list">
+            ${(b.suggested_outline || []).map(s => `<li>${escHtml(s)}</li>`).join('')}
+          </ul>
+        </div>
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Components</div>
+        <div class="brief-card-value">
+          ${componentRows.map(([name, included, reason]) => `
+            <div class="brief-component-row">
+              <div class="brief-check ${included ? 'yes' : 'no'}">${included ? '&#10003;' : '—'}</div>
+              <span class="brief-component-name">${name}</span>
+              <span class="brief-component-reason">${escHtml(reason || '')}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Writing Persona</div>
+        <div class="brief-card-value" style="white-space:pre-wrap;">${escHtml(b.custom_persona || '')}</div>
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Custom Instructions for Writer</div>
+        <div class="brief-card-value" style="white-space:pre-wrap;">${escHtml(b.custom_instructions || '')}</div>
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Competitor Gaps to Exploit</div>
+        <div class="brief-card-value">
+          ${(b.competitor_gaps || []).map(g => `<div class="brief-gap-item">${escHtml(g)}</div>`).join('')}
+        </div>
+      </div>
+
+      <div class="brief-card full-width">
+        <div class="brief-card-label">Differentiation Strategy</div>
+        <div class="brief-card-value" style="white-space:pre-wrap;">${escHtml(b.differentiation_strategy || '')}</div>
+      </div>
+    </div>
+  `;
+}
+
+async function runComparison() {
+  const content = document.getElementById('content-input').value.trim();
+  const url1 = document.getElementById('compare-url-1').value.trim();
+  const url2 = document.getElementById('compare-url-2').value.trim();
+
+  if (!content) return alert('Paste or upload your content in the Content Input panel first.');
+  if (!url1) return alert('Enter at least Competitor 1 URL.');
+
+  const btn = document.getElementById('compare-run-btn');
+  const results = document.getElementById('compare-results');
+
+  btn.disabled = true;
+  btn.textContent = 'Fetching & comparing...';
+  results.classList.add('active');
+  results.innerHTML = '<div class="compare-loading"><div class="spinner" style="margin:0 auto 12px;"></div>Fetching competitor content and running deep comparison via ' + (getModelInfo(currentModel).name) + '...<br><span style="font-size:11px;opacity:0.6;">This may take 30–60 seconds.</span></div>';
+
+  try {
+    const form = new FormData();
+    form.append('your_content', content);
+    form.append('competitor_url_1', url1);
+    if (url2) form.append('competitor_url_2', url2);
+    form.append('model', currentModel);
+
+    const res = await fetch('/api/content-compare', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Comparison failed');
+    }
+    const data = await res.json();
+    renderComparison(data);
+  } catch (err) {
+    results.innerHTML = `<div style="color:var(--red);padding:20px;text-align:center;">Comparison failed: ${escHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Deep Comparison';
+  }
+}
+
+function renderComparison(data) {
+  const results = document.getElementById('compare-results');
+  const articles = data.articles || [];
+  const sections = data.section_comparisons || [];
+  const overallVerdict = data.overall_verdict || '';
+  const actionItems = data.action_items || [];
+  const scores = data.comparative_scores || {};
+
+  let overviewHtml = '<div class="compare-overview">';
+  articles.forEach((a, i) => {
+    const isYours = i === 0;
+    overviewHtml += `
+      <div class="compare-col ${isYours ? 'yours' : ''}">
+        <div class="compare-col-label">${isYours ? 'Your Content' : 'Competitor ' + i}</div>
+        <div class="compare-col-title">${escHtml(a.title || (isYours ? 'Your Article' : 'Competitor ' + i))}</div>
+        <div class="compare-col-meta">${a.word_count || '?'} words</div>
+        ${a.overall_grade ? `<div style="margin-top:6px;font-size:18px;font-weight:700;font-family:var(--mono);color:${gradeColor(a.overall_grade)}">${a.overall_grade}</div>` : ''}
+      </div>
+    `;
+  });
+  overviewHtml += '</div>';
+
+  let scoresHtml = '';
+  if (Object.keys(scores).length > 0) {
+    scoresHtml = '<div class="compare-section open"><div class="compare-section-header" onclick="this.parentElement.classList.toggle(\'open\')">Comparative Scores</div><div class="compare-section-body">';
+    for (const [dimension, vals] of Object.entries(scores)) {
+      scoresHtml += `<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">${escHtml(dimension)}</div>`;
+      const labels = ['Your Content', 'Competitor 1', 'Competitor 2'];
+      if (Array.isArray(vals)) {
+        vals.forEach((v, i) => {
+          const pct = typeof v === 'number' ? (v > 1 ? v : v * 100) : 0;
+          const color = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--orange)' : 'var(--red)';
+          scoresHtml += `
+            <div class="compare-score-bar">
+              <span style="font-size:10px;color:var(--text-dim);width:90px;">${labels[i] || 'Article ' + (i+1)}</span>
+              <div class="compare-score-track"><div class="compare-score-fill" style="width:${pct}%;background:${color}"></div></div>
+              <span class="compare-score-val" style="color:${color}">${typeof v === 'number' ? (v > 1 ? Math.round(v) : v.toFixed(2)) : v}</span>
+            </div>
+          `;
+        });
+      }
+      scoresHtml += '</div>';
+    }
+    scoresHtml += '</div></div>';
+  }
+
+  let sectionsHtml = '';
+  sections.forEach((sec, idx) => {
+    const verdictClass = (sec.your_verdict || '').toLowerCase().includes('win') ? 'verdict-winning'
+      : (sec.your_verdict || '').toLowerCase().includes('los') ? 'verdict-losing'
+      : 'verdict-tied';
+
+    sectionsHtml += `
+      <div class="compare-section ${idx === 0 ? 'open' : ''}" >
+        <div class="compare-section-header" onclick="this.parentElement.classList.toggle('open')">
+          ${escHtml(sec.dimension || sec.section_name || 'Section ' + (idx+1))}
+          <span class="compare-section-verdict ${verdictClass}">${escHtml(sec.your_verdict || '')}</span>
+        </div>
+        <div class="compare-section-body">
+          <div class="compare-detail-grid">
+            <div class="compare-detail-cell yours">
+              <div class="compare-detail-cell-label">Your Content</div>
+              ${escHtml(sec.your_analysis || '')}
+            </div>
+            <div class="compare-detail-cell">
+              <div class="compare-detail-cell-label">Competitor 1</div>
+              ${escHtml(sec.competitor_1_analysis || '')}
+            </div>
+            ${sec.competitor_2_analysis ? `
+            <div class="compare-detail-cell">
+              <div class="compare-detail-cell-label">Competitor 2</div>
+              ${escHtml(sec.competitor_2_analysis || '')}
+            </div>` : ''}
+          </div>
+          ${sec.specific_feedback ? `<div style="margin-top:10px;font-size:12px;color:var(--text);padding:10px;background:var(--bg);border-radius:8px;border-left:3px solid var(--accent);">${escHtml(sec.specific_feedback)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  });
+
+  let actionHtml = '';
+  if (actionItems.length > 0) {
+    actionHtml = `
+      <div class="compare-action-items">
+        <div class="compare-action-title">Action Items to Beat Competitors</div>
+        <ul class="compare-action-list">
+          ${actionItems.map(a => `<li>${escHtml(a)}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  let verdictHtml = '';
+  if (overallVerdict) {
+    verdictHtml = `<div style="padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;font-size:13px;line-height:1.7;color:var(--text);">${escHtml(overallVerdict)}</div>`;
+  }
+
+  results.innerHTML = overviewHtml + verdictHtml + scoresHtml + sectionsHtml + actionHtml;
+}
+
+function gradeColor(grade) {
+  if (!grade) return 'var(--text)';
+  const g = grade.toUpperCase();
+  if (g.startsWith('A')) return 'var(--green)';
+  if (g.startsWith('B')) return 'var(--blue)';
+  if (g.startsWith('C')) return 'var(--orange)';
+  return 'var(--red)';
+}
+
+function escHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>

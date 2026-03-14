@@ -1,0 +1,20 @@
+{
+  "target_keyword": "B2B SaaS content marketing strategy",
+  "secondary_keywords": ["content marketing for SaaS", "SaaS SEO strategy", "organic growth B2B"],
+  "topic": "How B2B SaaS Companies Can Build a Content Marketing Engine That Actually Drives Pipeline",
+  "content_type": "long-form blog post",
+  "funnel_stage": "TOFU",
+  "target_audience": "Heads of Marketing and Content Leads at B2B SaaS companies ($1M-$20M ARR) struggling with content production at scale",
+  "intent": "informational with soft product tie-in",
+  "angle": "Most content marketing advice is generic. This piece should give a specific, opinionated framework based on what actually works for SaaS companies at this stage.",
+  "required_sections": [
+    "Why most SaaS content strategies fail",
+    "The content-to-pipeline connection",
+    "A practical content engine framework",
+    "Distribution strategy",
+    "Measuring what matters"
+  ],
+  "required_mentions": ["organic traffic", "SEO", "content distribution", "ICP-led content"],
+  "word_count_target": 2000,
+  "notes": "Avoid generic advice. Every section should have a specific takeaway. No fluff intros."
+}
