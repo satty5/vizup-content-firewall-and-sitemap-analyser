@@ -202,6 +202,44 @@ textarea::placeholder { color: var(--text-muted); }
 
 .file-info-clear:hover { color: var(--red); }
 
+/* Content URL fetch row */
+.content-url-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.content-url-input {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-family: var(--mono);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  outline: none;
+}
+.content-url-input:focus { border-color: var(--accent); }
+.content-url-input::placeholder { color: var(--text-muted); }
+.content-url-fetch-btn {
+  padding: 8px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.content-url-fetch-btn:hover { background: var(--accent-hover, #7c3aed); }
+.content-url-fetch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 label {
   display: block;
   font-size: 11px;
@@ -867,6 +905,32 @@ label {
 }
 .compare-url-input:focus { border-color: var(--accent); }
 .compare-url-input::placeholder { color: var(--text-muted); }
+.compare-url-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.compare-url-remove:hover { color: var(--red); }
+.compare-add-url-btn {
+  width: 100%;
+  padding: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.compare-add-url-btn:hover { border-color: var(--accent); color: var(--accent); }
 .compare-run-btn {
   width: 100%;
   padding: 10px;
@@ -1271,6 +1335,10 @@ label {
           <span class="file-info-meta" id="file-info-meta"></span>
           <button class="file-info-clear" onclick="clearUploadedFile()" title="Remove file">&times;</button>
         </div>
+        <div class="content-url-row">
+          <input type="text" class="content-url-input" id="content-url-input" placeholder="Or enter a URL to fetch content from...">
+          <button class="content-url-fetch-btn" id="content-url-fetch-btn" onclick="fetchContentFromUrl()">Fetch</button>
+        </div>
         <textarea id="content-input" class="content-area" placeholder="Or paste your content here..."></textarea>
       </div>
 
@@ -1374,15 +1442,20 @@ label {
 
         <div id="tab-compare" class="tab-content">
           <div class="compare-inputs">
-            <div class="compare-your-content-note">Your content is taken from the Content Input panel on the left. Upload or paste it there first.</div>
-            <div class="compare-url-row">
-              <span class="compare-url-label">Competitor 1</span>
-              <input type="text" class="compare-url-input" id="compare-url-1" placeholder="https://competitor-1-ranking-article.com/...">
+            <div class="compare-your-content-note">Your content (optional) is taken from the Content Input panel on the left. Without it, competitors are compared head-to-head.</div>
+            <div id="compare-urls-container">
+              <div class="compare-url-row" data-idx="1">
+                <span class="compare-url-label">Competitor 1</span>
+                <input type="text" class="compare-url-input" placeholder="https://competitor-1-ranking-article.com/...">
+                <button class="compare-url-remove" onclick="removeCompetitorRow(this)" title="Remove">&times;</button>
+              </div>
+              <div class="compare-url-row" data-idx="2">
+                <span class="compare-url-label">Competitor 2</span>
+                <input type="text" class="compare-url-input" placeholder="https://competitor-2-ranking-article.com/...">
+                <button class="compare-url-remove" onclick="removeCompetitorRow(this)" title="Remove">&times;</button>
+              </div>
             </div>
-            <div class="compare-url-row">
-              <span class="compare-url-label">Competitor 2</span>
-              <input type="text" class="compare-url-input" id="compare-url-2" placeholder="https://competitor-2-ranking-article.com/...">
-            </div>
+            <button class="compare-add-url-btn" id="compare-add-url-btn" onclick="addCompetitorRow()">+ Add Competitor</button>
             <button class="compare-run-btn" id="compare-run-btn" onclick="runComparison()">
               Run Deep Comparison
             </button>
@@ -1507,6 +1580,46 @@ function clearUploadedFile() {
   document.getElementById('content-input').value = '';
   const fileInput = document.querySelector('#upload-zone input[type="file"]');
   if (fileInput) fileInput.value = '';
+}
+
+async function fetchContentFromUrl() {
+  const urlInput = document.getElementById('content-url-input');
+  const url = urlInput.value.trim();
+  if (!url) return alert('Enter a URL to fetch content from.');
+
+  try { new URL(url); } catch { return alert('Please enter a valid URL (e.g. https://example.com/article).'); }
+
+  const btn = document.getElementById('content-url-fetch-btn');
+  const origText = btn.textContent;
+  btn.textContent = 'Fetching...';
+  btn.disabled = true;
+
+  try {
+    const form = new FormData();
+    form.append('url', url);
+    const res = await fetch('/api/fetch-url', { method: 'POST', body: form });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Fetch failed');
+    }
+
+    const data = await res.json();
+    document.getElementById('content-input').value = data.content;
+
+    const info = document.getElementById('file-info');
+    const nameEl = document.getElementById('file-info-name');
+    const metaEl = document.getElementById('file-info-meta');
+    const hostname = new URL(url).hostname;
+    nameEl.textContent = hostname;
+    metaEl.textContent = `${data.word_count.toLocaleString()} words · URL`;
+    info.style.display = 'flex';
+  } catch (err) {
+    alert('Failed to fetch URL: ' + err.message);
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
 }
 
 function initDragDrop() {
@@ -2158,27 +2271,64 @@ function renderContentBrief(b) {
   `;
 }
 
+function addCompetitorRow() {
+  const container = document.getElementById('compare-urls-container');
+  const rows = container.querySelectorAll('.compare-url-row');
+  if (rows.length >= 10) return alert('Maximum 10 competitors allowed.');
+  const idx = rows.length + 1;
+  const row = document.createElement('div');
+  row.className = 'compare-url-row';
+  row.dataset.idx = idx;
+  row.innerHTML = `
+    <span class="compare-url-label">Competitor ${idx}</span>
+    <input type="text" class="compare-url-input" placeholder="https://competitor-${idx}-ranking-article.com/...">
+    <button class="compare-url-remove" onclick="removeCompetitorRow(this)" title="Remove">&times;</button>
+  `;
+  container.appendChild(row);
+  renumberCompetitorRows();
+}
+
+function removeCompetitorRow(btn) {
+  const container = document.getElementById('compare-urls-container');
+  if (container.querySelectorAll('.compare-url-row').length <= 1) return;
+  btn.closest('.compare-url-row').remove();
+  renumberCompetitorRows();
+}
+
+function renumberCompetitorRows() {
+  const rows = document.querySelectorAll('#compare-urls-container .compare-url-row');
+  rows.forEach((row, i) => {
+    row.dataset.idx = i + 1;
+    row.querySelector('.compare-url-label').textContent = 'Competitor ' + (i + 1);
+  });
+}
+
+function getCompetitorUrls() {
+  const inputs = document.querySelectorAll('#compare-urls-container .compare-url-input');
+  return Array.from(inputs).map(el => el.value.trim()).filter(Boolean);
+}
+
 async function runComparison() {
   const content = document.getElementById('content-input').value.trim();
-  const url1 = document.getElementById('compare-url-1').value.trim();
-  const url2 = document.getElementById('compare-url-2').value.trim();
+  const urls = getCompetitorUrls();
 
-  if (!content) return alert('Paste or upload your content in the Content Input panel first.');
-  if (!url1) return alert('Enter at least Competitor 1 URL.');
+  if (urls.length === 0) return alert('Enter at least one competitor URL.');
+  if (!content && urls.length < 2) return alert('Without your own content, enter at least 2 competitor URLs for a head-to-head comparison.');
 
+  const isCompOnly = !content;
   const btn = document.getElementById('compare-run-btn');
   const results = document.getElementById('compare-results');
 
   btn.disabled = true;
   btn.textContent = 'Fetching & comparing...';
   results.classList.add('active');
-  results.innerHTML = '<div class="compare-loading"><div class="spinner" style="margin:0 auto 12px;"></div>Fetching competitor content and running deep comparison via ' + (getModelInfo(currentModel).name) + '...<br><span style="font-size:11px;opacity:0.6;">This may take 30–60 seconds.</span></div>';
+  const modeLabel = isCompOnly ? 'competitor head-to-head analysis' : 'deep comparison';
+  results.innerHTML = '<div class="compare-loading"><div class="spinner" style="margin:0 auto 12px;"></div>Fetching ' + urls.length + ' competitor article' + (urls.length > 1 ? 's' : '') + ' and running ' + modeLabel + ' via ' + (getModelInfo(currentModel).name) + '...<br><span style="font-size:11px;opacity:0.6;">This may take 30–90 seconds depending on number of articles.</span></div>';
 
   try {
     const form = new FormData();
     form.append('your_content', content);
-    form.append('competitor_url_1', url1);
-    if (url2) form.append('competitor_url_2', url2);
+    form.append('competitor_urls', JSON.stringify(urls));
     form.append('model', currentModel);
 
     const res = await fetch('/api/content-compare', { method: 'POST', body: form });
@@ -2187,6 +2337,7 @@ async function runComparison() {
       throw new Error(err.detail || 'Comparison failed');
     }
     const data = await res.json();
+    data._comp_only = isCompOnly;
     renderComparison(data);
   } catch (err) {
     results.innerHTML = `<div style="color:var(--red);padding:20px;text-align:center;">Comparison failed: ${escHtml(err.message)}</div>`;
@@ -2203,15 +2354,22 @@ function renderComparison(data) {
   const overallVerdict = data.overall_verdict || '';
   const actionItems = data.action_items || [];
   const scores = data.comparative_scores || {};
+  const compOnly = !!data._comp_only;
+
+  const scoreLabels = compOnly
+    ? articles.map(a => a.label || 'Competitor')
+    : ['Your Content', ...articles.slice(1).map(a => a.label || 'Competitor')];
 
   let overviewHtml = '<div class="compare-overview">';
   articles.forEach((a, i) => {
-    const isYours = i === 0;
+    const isYours = !compOnly && i === 0;
+    const label = a.label || (isYours ? 'Your Content' : 'Competitor ' + (compOnly ? i + 1 : i));
     overviewHtml += `
       <div class="compare-col ${isYours ? 'yours' : ''}">
-        <div class="compare-col-label">${isYours ? 'Your Content' : 'Competitor ' + i}</div>
-        <div class="compare-col-title">${escHtml(a.title || (isYours ? 'Your Article' : 'Competitor ' + i))}</div>
+        <div class="compare-col-label">${escHtml(label)}</div>
+        <div class="compare-col-title">${escHtml(a.title || label)}</div>
         <div class="compare-col-meta">${a.word_count || '?'} words</div>
+        ${a.url ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(a.url)}">${escHtml(a.url)}</div>` : ''}
         ${a.overall_grade ? `<div style="margin-top:6px;font-size:18px;font-weight:700;font-family:var(--mono);color:${gradeColor(a.overall_grade)}">${a.overall_grade}</div>` : ''}
       </div>
     `;
@@ -2223,14 +2381,13 @@ function renderComparison(data) {
     scoresHtml = '<div class="compare-section open"><div class="compare-section-header" onclick="this.parentElement.classList.toggle(\'open\')">Comparative Scores</div><div class="compare-section-body">';
     for (const [dimension, vals] of Object.entries(scores)) {
       scoresHtml += `<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">${escHtml(dimension)}</div>`;
-      const labels = ['Your Content', 'Competitor 1', 'Competitor 2'];
       if (Array.isArray(vals)) {
         vals.forEach((v, i) => {
           const pct = typeof v === 'number' ? (v > 1 ? v : v * 100) : 0;
           const color = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--orange)' : 'var(--red)';
           scoresHtml += `
             <div class="compare-score-bar">
-              <span style="font-size:10px;color:var(--text-dim);width:90px;">${labels[i] || 'Article ' + (i+1)}</span>
+              <span style="font-size:10px;color:var(--text-dim);width:90px;">${scoreLabels[i] || 'Article ' + (i+1)}</span>
               <div class="compare-score-track"><div class="compare-score-fill" style="width:${pct}%;background:${color}"></div></div>
               <span class="compare-score-val" style="color:${color}">${typeof v === 'number' ? (v > 1 ? Math.round(v) : v.toFixed(2)) : v}</span>
             </div>
@@ -2244,31 +2401,49 @@ function renderComparison(data) {
 
   let sectionsHtml = '';
   sections.forEach((sec, idx) => {
-    const verdictClass = (sec.your_verdict || '').toLowerCase().includes('win') ? 'verdict-winning'
-      : (sec.your_verdict || '').toLowerCase().includes('los') ? 'verdict-losing'
+    const verdict = sec.your_verdict || sec.winner || '';
+    const verdictClass = verdict.toLowerCase().includes('win') ? 'verdict-winning'
+      : verdict.toLowerCase().includes('los') ? 'verdict-losing'
       : 'verdict-tied';
+
+    let cellsHtml = '';
+    if (compOnly) {
+      for (let ci = 1; ci <= 5; ci++) {
+        const analysis = sec[`competitor_${ci}_analysis`];
+        if (analysis) {
+          cellsHtml += `
+            <div class="compare-detail-cell">
+              <div class="compare-detail-cell-label">Competitor ${ci}</div>
+              ${escHtml(analysis)}
+            </div>`;
+        }
+      }
+    } else {
+      cellsHtml = `
+        <div class="compare-detail-cell yours">
+          <div class="compare-detail-cell-label">Your Content</div>
+          ${escHtml(sec.your_analysis || '')}
+        </div>
+        <div class="compare-detail-cell">
+          <div class="compare-detail-cell-label">Competitor 1</div>
+          ${escHtml(sec.competitor_1_analysis || '')}
+        </div>
+        ${sec.competitor_2_analysis ? `
+        <div class="compare-detail-cell">
+          <div class="compare-detail-cell-label">Competitor 2</div>
+          ${escHtml(sec.competitor_2_analysis || '')}
+        </div>` : ''}`;
+    }
 
     sectionsHtml += `
       <div class="compare-section ${idx === 0 ? 'open' : ''}" >
         <div class="compare-section-header" onclick="this.parentElement.classList.toggle('open')">
           ${escHtml(sec.dimension || sec.section_name || 'Section ' + (idx+1))}
-          <span class="compare-section-verdict ${verdictClass}">${escHtml(sec.your_verdict || '')}</span>
+          <span class="compare-section-verdict ${verdictClass}">${escHtml(verdict)}</span>
         </div>
         <div class="compare-section-body">
           <div class="compare-detail-grid">
-            <div class="compare-detail-cell yours">
-              <div class="compare-detail-cell-label">Your Content</div>
-              ${escHtml(sec.your_analysis || '')}
-            </div>
-            <div class="compare-detail-cell">
-              <div class="compare-detail-cell-label">Competitor 1</div>
-              ${escHtml(sec.competitor_1_analysis || '')}
-            </div>
-            ${sec.competitor_2_analysis ? `
-            <div class="compare-detail-cell">
-              <div class="compare-detail-cell-label">Competitor 2</div>
-              ${escHtml(sec.competitor_2_analysis || '')}
-            </div>` : ''}
+            ${cellsHtml}
           </div>
           ${sec.specific_feedback ? `<div style="margin-top:10px;font-size:12px;color:var(--text);padding:10px;background:var(--bg);border-radius:8px;border-left:3px solid var(--accent);">${escHtml(sec.specific_feedback)}</div>` : ''}
         </div>
@@ -2278,9 +2453,10 @@ function renderComparison(data) {
 
   let actionHtml = '';
   if (actionItems.length > 0) {
+    const actionTitle = compOnly ? 'Key Insights & Takeaways' : 'Action Items to Beat Competitors';
     actionHtml = `
       <div class="compare-action-items">
-        <div class="compare-action-title">Action Items to Beat Competitors</div>
+        <div class="compare-action-title">${actionTitle}</div>
         <ul class="compare-action-list">
           ${actionItems.map(a => `<li>${escHtml(a)}</li>`).join('')}
         </ul>

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -97,6 +97,24 @@ async def upload_file(file: UploadFile = File(...)):
         "file_type": ext,
         "word_count": word_count,
         "char_count": len(content),
+    }
+
+
+@app.post("/api/fetch-url")
+async def fetch_url_content(url: str = Form(...)):
+    """Fetch a URL and return extracted text as reviewable content."""
+    try:
+        page_text, word_count = await _fetch_and_extract(url)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to fetch URL: {e}")
+
+    if word_count < 20:
+        raise HTTPException(status_code=422, detail="Could not extract meaningful content from the URL.")
+
+    return {
+        "content": page_text,
+        "word_count": word_count,
+        "source_url": url,
     }
 
 
@@ -389,7 +407,17 @@ async def _fetch_and_extract(url: str) -> tuple[str, int]:
         headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                           "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/120.0.0.0 Safari/537.36"
+                          "Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
         },
     ) as client:
         resp = await client.get(url)
@@ -420,132 +448,69 @@ async def _fetch_and_extract(url: str) -> tuple[str, int]:
     return page_text, len(page_text.split())
 
 
-@app.post("/api/content-compare")
-async def content_compare(
-    your_content: str = Form(...),
-    competitor_url_1: str = Form(...),
-    competitor_url_2: str = Form(""),
-    model: str = Form(""),
-):
-    """Deep comparison of user content vs 1-2 competitor articles."""
-    model_to_use = model if model else DEFAULT_MODEL
-    set_model(model_to_use)
+def _build_full_compare_prompt(your_content, your_wc, your_max, fetched, competitor_blocks):
+    """Build system/user prompts for user-content-vs-competitors comparison."""
+    num_comp = len(fetched)
+    comp_word = f"{num_comp} competitor article{'s' if num_comp > 1 else ''}"
 
-    import asyncio
+    article_entries = [
+        f'    {{ "label": "Your Content", "title": "Detected or inferred title", '
+        f'"word_count": {your_wc}, "overall_grade": "A+ to F letter grade" }}'
+    ]
+    for i, f in enumerate(fetched, 1):
+        article_entries.append(
+            f'    {{ "label": "Competitor {i}", "title": "Detected title", '
+            f'"word_count": {f["word_count"]}, "overall_grade": "A+ to F letter grade" }}'
+        )
+    articles_json = ",\n".join(article_entries)
 
-    async def safe_fetch(url: str, label: str) -> dict:
-        try:
-            text, wc = await _fetch_and_extract(url)
-            return {"url": url, "text": text, "word_count": wc, "label": label, "error": None}
-        except Exception as e:
-            return {"url": url, "text": "", "word_count": 0, "label": label, "error": str(e)}
+    scores_csv = "score_yours_0_to_100, " + ", ".join(f"score_comp{i}" for i in range(1, num_comp + 1))
+    section_analysis_fields = '"your_analysis": "How your title compares — specific feedback",\n      '
+    section_analysis_fields += "\n      ".join(
+        f'"competitor_{i}_analysis": "What competitor {i} does",' for i in range(1, num_comp + 1)
+    )
 
-    fetch_tasks = [safe_fetch(competitor_url_1, "Competitor 1")]
-    if competitor_url_2:
-        fetch_tasks.append(safe_fetch(competitor_url_2, "Competitor 2"))
-    fetched = await asyncio.gather(*fetch_tasks)
-
-    for f in fetched:
-        if f["error"]:
-            raise HTTPException(status_code=422, detail=f"Failed to fetch {f['label']} ({f['url']}): {f['error']}")
-
-    your_wc = len(your_content.split())
-
-    has_two = len(fetched) == 2
-    your_max = 30000
-    comp_max = 20000 if not has_two else 15000
-
-    competitor_blocks = ""
-    for f in fetched:
-        competitor_blocks += f"\n\n--- {f['label'].upper()} (URL: {f['url']}, {f['word_count']} words) ---\n{f['text'][:comp_max]}\n--- END {f['label'].upper()} ---"
-
-    system_prompt = f"""You are an elite content analyst performing a deep, section-by-section and line-by-line comparison between a user's content and {'2 competitor articles' if has_two else '1 competitor article'} that are currently ranking on Google.
+    system_prompt = f"""You are an elite content analyst performing a deep, section-by-section and line-by-line comparison between a user's content and {comp_word} that are currently ranking on Google.
 
 Your comparison must be brutally honest, specific, and actionable. Do NOT give generic feedback. Reference specific sentences, paragraphs, and sections.
 
 Return a JSON object with this exact structure:
 {{
   "articles": [
-    {{
-      "label": "Your Content",
-      "title": "Detected or inferred title",
-      "word_count": {your_wc},
-      "overall_grade": "A+ to F letter grade"
-    }},
-    {{
-      "label": "Competitor 1",
-      "title": "Detected title",
-      "word_count": {fetched[0]['word_count']},
-      "overall_grade": "A+ to F letter grade"
-    }}{(',' + chr(10) + '    { "label": "Competitor 2", "title": "Detected title", "word_count": ' + str(fetched[1]["word_count"]) + ', "overall_grade": "A+ to F letter grade" }') if has_two else ''}
+{articles_json}
   ],
 
   "overall_verdict": "A 3-4 sentence executive summary. Where does the user's content stand versus competition? Is it publishable as-is, or does it need work? What is the single biggest gap?",
 
   "comparative_scores": {{
-    "Content Depth & Value": [score_yours_0_to_100, score_comp1, {('score_comp2' if has_two else '')}],
-    "Expertise & Authority Signals": [score_yours, score_comp1, {('score_comp2' if has_two else '')}],
-    "SEO Optimization": [score_yours, score_comp1, {('score_comp2' if has_two else '')}],
-    "Readability & Flow": [score_yours, score_comp1, {('score_comp2' if has_two else '')}],
-    "Originality & Unique Value": [score_yours, score_comp1, {('score_comp2' if has_two else '')}],
-    "Structure & Formatting": [score_yours, score_comp1, {('score_comp2' if has_two else '')}],
-    "Engagement & Hook Quality": [score_yours, score_comp1, {('score_comp2' if has_two else '')}],
-    "Actionability": [score_yours, score_comp1, {('score_comp2' if has_two else '')}]
+    "Content Depth & Value": [{scores_csv}],
+    "Expertise & Authority Signals": [{scores_csv}],
+    "SEO Optimization": [{scores_csv}],
+    "Readability & Flow": [{scores_csv}],
+    "Originality & Unique Value": [{scores_csv}],
+    "Structure & Formatting": [{scores_csv}],
+    "Engagement & Hook Quality": [{scores_csv}],
+    "Actionability": [{scores_csv}]
   }},
 
   "section_comparisons": [
     {{
       "dimension": "Title & Meta",
-      "your_analysis": "How your title compares — specific feedback",
-      "competitor_1_analysis": "What competitor 1 does",
-      {"competitor_2_analysis" if has_two else ""},
+      {section_analysis_fields}
       "your_verdict": "Winning" or "Losing" or "Tied",
       "specific_feedback": "Exactly what to change and why"
     }},
-    {{
-      "dimension": "Introduction / Hook",
-      ... same structure ...
-    }},
-    {{
-      "dimension": "Content Depth & Examples",
-      ...
-    }},
-    {{
-      "dimension": "Data & Evidence",
-      ...
-    }},
-    {{
-      "dimension": "Structure & Headings",
-      ...
-    }},
-    {{
-      "dimension": "Writing Quality & Voice",
-      ...
-    }},
-    {{
-      "dimension": "SEO Signals",
-      ...
-    }},
-    {{
-      "dimension": "Visuals & Formatting",
-      ...
-    }},
-    {{
-      "dimension": "Call-to-Action & Conversion",
-      ...
-    }},
-    {{
-      "dimension": "Conclusion & Takeaways",
-      ...
-    }},
-    {{
-      "dimension": "AI vs Human Quality",
-      ...
-    }},
-    {{
-      "dimension": "Unique Value Proposition",
-      ...
-    }}
+    {{ "dimension": "Introduction / Hook", ... same structure ... }},
+    {{ "dimension": "Content Depth & Examples", ... }},
+    {{ "dimension": "Data & Evidence", ... }},
+    {{ "dimension": "Structure & Headings", ... }},
+    {{ "dimension": "Writing Quality & Voice", ... }},
+    {{ "dimension": "SEO Signals", ... }},
+    {{ "dimension": "Visuals & Formatting", ... }},
+    {{ "dimension": "Call-to-Action & Conversion", ... }},
+    {{ "dimension": "Conclusion & Takeaways", ... }},
+    {{ "dimension": "AI vs Human Quality", ... }},
+    {{ "dimension": "Unique Value Proposition", ... }}
   ],
 
   "action_items": [
@@ -570,6 +535,156 @@ IMPORTANT RULES:
 {competitor_blocks}
 
 Perform a deep, section-by-section comparison. Return the complete JSON analysis."""
+    return system_prompt, user_prompt
+
+
+def _build_competitor_only_prompt(fetched, competitor_blocks, comp_max):
+    """Build system/user prompts for competitor-vs-competitor analysis (no user content)."""
+    num = len(fetched)
+    article_entries = []
+    score_entries = []
+    for i, f in enumerate(fetched, 1):
+        article_entries.append(
+            f'    {{ "label": "Competitor {i}", "title": "Detected title", '
+            f'"word_count": {f["word_count"]}, "overall_grade": "A+ to F letter grade", '
+            f'"url": "{f["url"]}" }}'
+        )
+        score_entries.append(f"score_comp{i}")
+    articles_json = ",\n".join(article_entries)
+    scores_csv = ", ".join(score_entries)
+
+    comp_labels = [f"Competitor {i+1}" for i in range(num)]
+    section_analysis_fields = "\n      ".join(
+        f'"competitor_{i+1}_analysis": "What {comp_labels[i]} does",' for i in range(num)
+    )
+
+    system_prompt = f"""You are an elite content analyst performing a deep, head-to-head comparison between {num} competitor articles that are currently ranking on Google on similar topics.
+
+Your analysis must be brutally honest, specific, and actionable. Do NOT give generic feedback. Reference specific sentences, paragraphs, and sections from each article.
+
+Return a JSON object with this exact structure:
+{{
+  "articles": [
+{articles_json}
+  ],
+
+  "overall_verdict": "A 3-5 sentence executive summary comparing the competitors head-to-head. Which article is stronger overall? What are the key differentiators? What can be learned from each?",
+
+  "comparative_scores": {{
+    "Content Depth & Value": [{scores_csv}],
+    "Expertise & Authority Signals": [{scores_csv}],
+    "SEO Optimization": [{scores_csv}],
+    "Readability & Flow": [{scores_csv}],
+    "Originality & Unique Value": [{scores_csv}],
+    "Structure & Formatting": [{scores_csv}],
+    "Engagement & Hook Quality": [{scores_csv}],
+    "Actionability": [{scores_csv}]
+  }},
+
+  "section_comparisons": [
+    {{
+      "dimension": "Title & Meta",
+      {section_analysis_fields}
+      "winner": "{comp_labels[0]}" or "{comp_labels[1]}" or "Tied",
+      "specific_feedback": "Key differences and takeaways"
+    }},
+    {{ "dimension": "Introduction / Hook", ... same structure ... }},
+    {{ "dimension": "Content Depth & Examples", ... }},
+    {{ "dimension": "Data & Evidence", ... }},
+    {{ "dimension": "Structure & Headings", ... }},
+    {{ "dimension": "Writing Quality & Voice", ... }},
+    {{ "dimension": "SEO Signals", ... }},
+    {{ "dimension": "Visuals & Formatting", ... }},
+    {{ "dimension": "Call-to-Action & Conversion", ... }},
+    {{ "dimension": "Conclusion & Takeaways", ... }},
+    {{ "dimension": "AI vs Human Quality", ... }},
+    {{ "dimension": "Unique Value Proposition", ... }}
+  ],
+
+  "action_items": [
+    "Key insight or takeaway 1 — what makes the winning article better in this area",
+    "Key insight 2...",
+    "... up to 10 insights, ordered by significance"
+  ]
+}}
+
+IMPORTANT RULES:
+- Every "competitor_X_analysis" must reference SPECIFIC content from that article, not generic statements.
+- "winner" must be exactly one of the competitor labels or "Tied".
+- "specific_feedback" must cite specific sections, sentences, and differences.
+- Be harsh and honest. Grade each article on its own merits.
+- All scores are 0-100 integers."""
+
+    user_prompt = f"""Analyze and compare these competitor articles in depth.
+{competitor_blocks}
+
+Perform a deep, section-by-section comparison. Return the complete JSON analysis."""
+    return system_prompt, user_prompt
+
+
+@app.post("/api/content-compare")
+async def content_compare(request: Request):
+    """Deep comparison: user content vs competitors, or competitor vs competitor."""
+    form = await request.form()
+    your_content = form.get("your_content", "").strip()
+    model = form.get("model", "")
+    competitor_urls_json = form.get("competitor_urls", "[]")
+
+    try:
+        competitor_urls = json.loads(competitor_urls_json)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid competitor_urls JSON.")
+
+    competitor_urls = [u.strip() for u in competitor_urls if u.strip()]
+    if not competitor_urls:
+        raise HTTPException(status_code=422, detail="Provide at least one competitor URL.")
+    if len(competitor_urls) > 10:
+        raise HTTPException(status_code=422, detail="Maximum 10 competitor URLs allowed.")
+
+    model_to_use = model if model else DEFAULT_MODEL
+    set_model(model_to_use)
+
+    import asyncio
+
+    async def safe_fetch(url: str, label: str) -> dict:
+        try:
+            text, wc = await _fetch_and_extract(url)
+            return {"url": url, "text": text, "word_count": wc, "label": label, "error": None}
+        except Exception as e:
+            return {"url": url, "text": "", "word_count": 0, "label": label, "error": str(e)}
+
+    fetch_tasks = [
+        safe_fetch(url, f"Competitor {i+1}")
+        for i, url in enumerate(competitor_urls)
+    ]
+    fetched = await asyncio.gather(*fetch_tasks)
+
+    for f in fetched:
+        if f["error"]:
+            raise HTTPException(status_code=422, detail=f"Failed to fetch {f['label']} ({f['url']}): {f['error']}")
+
+    has_your_content = bool(your_content)
+    your_wc = len(your_content.split()) if has_your_content else 0
+    num_comp = len(fetched)
+    comp_only = not has_your_content
+
+    if comp_only and num_comp < 2:
+        raise HTTPException(status_code=422, detail="Provide at least 2 competitor URLs when comparing without your own content.")
+
+    your_max = 30000
+    total_comp_budget = 40000
+    comp_max = total_comp_budget // num_comp
+
+    competitor_blocks = ""
+    for f in fetched:
+        competitor_blocks += f"\n\n--- {f['label'].upper()} (URL: {f['url']}, {f['word_count']} words) ---\n{f['text'][:comp_max]}\n--- END {f['label'].upper()} ---"
+
+    if comp_only:
+        system_prompt, user_prompt = _build_competitor_only_prompt(fetched, competitor_blocks, comp_max)
+    else:
+        system_prompt, user_prompt = _build_full_compare_prompt(
+            your_content, your_wc, your_max, fetched, competitor_blocks,
+        )
 
     try:
         result = await llm_review(
