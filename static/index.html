@@ -1083,6 +1083,40 @@ label {
   top: 7px;
 }
 
+.compare-download-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 14px;
+}
+.compare-download-bar-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-right: auto;
+}
+.compare-dl-btn {
+  padding: 5px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.compare-dl-btn:hover { border-color: var(--accent); background: var(--accent-glow, rgba(109,40,217,0.08)); }
+.compare-dl-btn svg { width: 14px; height: 14px; }
+.compare-dl-btn.copied { border-color: var(--green); color: var(--green); }
+
 .compare-score-bar {
   display: flex;
   align-items: center;
@@ -2469,7 +2503,88 @@ function renderComparison(data) {
     verdictHtml = `<div style="padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;font-size:13px;line-height:1.7;color:var(--text);">${escHtml(overallVerdict)}</div>`;
   }
 
-  results.innerHTML = overviewHtml + verdictHtml + scoresHtml + sectionsHtml + actionHtml;
+  const downloadBar = `
+    <div class="compare-download-bar">
+      <span class="compare-download-bar-label">Export Report</span>
+      <button class="compare-dl-btn" onclick="copyComparisonText()" id="compare-copy-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        Copy Text
+      </button>
+      <button class="compare-dl-btn" onclick="downloadComparisonExcel()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Excel
+      </button>
+      <button class="compare-dl-btn" onclick="downloadComparisonPdf()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg>
+        PDF
+      </button>
+    </div>
+  `;
+
+  results.innerHTML = downloadBar + overviewHtml + verdictHtml + scoresHtml + sectionsHtml + actionHtml;
+  window._lastComparisonData = data;
+}
+
+async function copyComparisonText() {
+  if (!window._lastComparisonData) return alert('No comparison data to copy.');
+  try {
+    const res = await fetch('/api/comparison-report/download-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(window._lastComparisonData),
+    });
+    const text = await res.text();
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('compare-copy-btn');
+    btn.classList.add('copied');
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Copied!';
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy Text';
+    }, 2000);
+  } catch (err) {
+    alert('Copy failed: ' + err.message);
+  }
+}
+
+async function downloadComparisonExcel() {
+  if (!window._lastComparisonData) return alert('No comparison data to download.');
+  try {
+    const res = await fetch('/api/comparison-report/download-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(window._lastComparisonData),
+    });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'comparison_report.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Excel download failed: ' + err.message);
+  }
+}
+
+async function downloadComparisonPdf() {
+  if (!window._lastComparisonData) return alert('No comparison data to download.');
+  try {
+    const res = await fetch('/api/comparison-report/download-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(window._lastComparisonData),
+    });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'comparison_report.pdf';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('PDF download failed: ' + err.message);
+  }
 }
 
 function gradeColor(grade) {
