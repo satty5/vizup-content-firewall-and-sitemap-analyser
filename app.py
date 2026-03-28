@@ -804,15 +804,23 @@ def _extract_page_context(html: str, url: str) -> dict:
 
     # Schema details
     schema_types = []
+    def _collect_schema_type(val):
+        if isinstance(val, str):
+            schema_types.append(val)
+        elif isinstance(val, list):
+            for v in val:
+                if isinstance(v, str):
+                    schema_types.append(v)
+
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
         try:
             sd = json.loads(script.string or "")
             if isinstance(sd, dict) and "@type" in sd:
-                schema_types.append(sd["@type"])
+                _collect_schema_type(sd["@type"])
             elif isinstance(sd, list):
                 for item in sd:
                     if isinstance(item, dict) and "@type" in item:
-                        schema_types.append(item["@type"])
+                        _collect_schema_type(item["@type"])
         except (json.JSONDecodeError, TypeError):
             pass
 
