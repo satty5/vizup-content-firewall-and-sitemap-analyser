@@ -9,14 +9,21 @@ Then: open http://localhost:8500
 from __future__ import annotations
 
 import json
+import logging
 import os
-from datetime import datetime
+import re
+import gzip
+import asyncio
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urljoin
+from collections import Counter
 
 import httpx
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from models.brand_context import BrandContext, ContentBrief
@@ -33,6 +40,9 @@ from config.settings import (
 
 app = FastAPI(title="Vizup Soul — Content Quality Firewall")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+log = logging.getLogger("vizup")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 
 EXAMPLES_DIR = Path("examples")
 HISTORY_PATH = "review_history.jsonl"
@@ -1014,6 +1024,133 @@ def _format_context_for_prompt(ctx: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_ranking_analysis_prompt(main_data, comp_data, page_blocks, has_main):
+    """Build prompts that learn from what Google ranks, then evaluate the main page."""
+    all_pages = ([main_data] if main_data else []) + list(comp_data)
+    n = len(all_pages)
+    labels = [p["label"] for p in all_pages]
+
+    article_entries = []
+    for p in all_pages:
+        pos = p.get("position", "")
+        article_entries.append(
+            f'    {{ "label": "{p["label"]}", "url": "{p["url"]}", '
+            f'"word_count": {p["word_count"]}, '
+            f'"ranking_position": "{pos}", '
+            f'"overall_grade": "A+ to F" }}'
+        )
+    articles_json = ",\n".join(article_entries)
+    scores_csv = ", ".join(f"score_{i}" for i in range(n))
+
+    analysis_fields = "\n      ".join(
+        f'"{labels[i].lower().replace(" ", "_")}_analysis": "Analysis of {labels[i]}",'
+        for i in range(n)
+    )
+
+    system_prompt = f"""You are a senior search strategist who reverse-engineers Google's ranking decisions. You do NOT do checklist SEO audits. Instead, you study what Google is actually ranking and learn its preferences.
+
+YOUR METHOD:
+1. STUDY the top-ranking pages (Page 1 competitors). These are what Google currently rewards.
+2. EXTRACT PATTERNS from the ranking pages — what word count range does Google prefer? What heading density? What page type? What content structure? What trust signals? What intent match?
+3. CALCULATE the "Google-preferred range" for each dimension based on what is ACTUALLY ranking.
+4. EVALUATE the main page (Your Page) against these learned ranges — not against SEO best practices, but against what Google demonstrably rewards for this query.
+5. IDENTIFY the real reasons for ranking gaps — not surface-level SEO features.
+
+CRITICAL RULES:
+- MORE is NOT better. 8000 words is NOT better than 2000 if the ranking pages average 2000.
+- MORE headings is NOT better. 33 H2s can be worse than 8 if ranking pages have 8.
+- MORE schema is NOT better. Triple schema on a page-45 result means nothing.
+- Unicode tricks in titles are NOT ranking signals. Do not recommend them.
+- OVER-OPTIMIZATION is a NEGATIVE signal. Detect and penalize it.
+- Page type FIT matters enormously. A mega-guide loses to a clean package page if the query is transactional.
+- Site-level trust drags individual pages down. Acknowledge when this is likely.
+- Content EFFICIENCY (value per word) beats content LENGTH.
+
+Return a JSON object:
+{{
+  "articles": [
+{articles_json}
+  ],
+
+  "google_preference_model": {{
+    "query_intent": "What does the searcher actually want? Be specific.",
+    "preferred_page_type": "What page type does Google prefer for this query based on what ranks?",
+    "preferred_word_count_range": "e.g. 1500-3000 based on what ranks",
+    "preferred_heading_density": "e.g. 6-12 H2s, based on ranking pages",
+    "preferred_content_style": "Direct/transactional vs comprehensive/editorial — what ranks?",
+    "trust_signals_that_matter": "What trust elements do the TOP ranking pages share?",
+    "what_ranking_pages_have_in_common": "3-5 patterns shared by Page 1 results",
+    "what_ranking_pages_do_NOT_do": "Things the ranking pages avoid that weaker pages do"
+  }},
+
+  "overall_verdict": "3-5 sentences. What does Google prefer for this query based on the ranking evidence? If there is a main page: why is it ranked where it is? What is the #1 reason for the ranking gap? Be brutally honest.",
+
+  "comparative_scores": {{
+    "Query Intent Match": [{scores_csv}],
+    "Content Efficiency": [{scores_csv}],
+    "Page Type Fit": [{scores_csv}],
+    "Trust & Authority Signals": [{scores_csv}],
+    "User Decision Support": [{scores_csv}],
+    "Content Focus vs Bloat": [{scores_csv}],
+    "Conversion UX": [{scores_csv}],
+    "Over-Optimization Risk": [{scores_csv}],
+    "SERP Click Appeal": [{scores_csv}],
+    "Overall Ranking Potential": [{scores_csv}]
+  }},
+
+  "section_comparisons": [
+    {{
+      "dimension": "Query Intent Alignment",
+      {analysis_fields}
+      "verdict": "Which page best matches what the searcher wants?",
+      "google_signal": "What does the ranking data tell us about Google's intent interpretation?"
+    }},
+    {{ "dimension": "Content Efficiency & Focus", ... }},
+    {{ "dimension": "Page Type & Structure Fit", ... }},
+    {{ "dimension": "Over-Optimization Detection", ... }},
+    {{ "dimension": "Trust, Authority & E-E-A-T", ... }},
+    {{ "dimension": "User Decision Journey", ... }},
+    {{ "dimension": "SERP Listing & Click Appeal", ... }},
+    {{ "dimension": "Internal & External Linking Quality", ... }},
+    {{ "dimension": "Content Uniqueness & Differentiation", ... }},
+    {{ "dimension": "Conversion Path & CTA Clarity", ... }}
+  ],
+
+  "ranking_gap_diagnosis": {{
+    "primary_reason": "The single most important reason for the ranking gap",
+    "secondary_reasons": ["2-3 additional contributing factors"],
+    "site_level_concerns": "Any site-level trust/quality issues that may be dragging this page down",
+    "over_optimization_flags": ["Specific things the main page does that may be hurting it"],
+    "intent_mismatch_details": "How the main page's approach differs from what Google rewards"
+  }},
+
+  "action_items": [
+    "Specific, prioritized action. Focus on what will ACTUALLY improve rankings, not checklist items.",
+    "... up to 10 actions, ordered by expected ranking impact"
+  ]
+}}
+
+SCORING RULES:
+- "Query Intent Match": How well does the page serve what the user is searching for? Top-ranking pages should score highest.
+- "Content Efficiency": Value per word. A focused 2000-word page scoring higher than a bloated 8000-word page is CORRECT.
+- "Page Type Fit": Does the page format match what Google rewards for this query?
+- "Content Focus vs Bloat": HIGH score = focused, lean, efficient. LOW score = bloated, repetitive, over-structured.
+- "Over-Optimization Risk": HIGH score = natural, balanced. LOW score = over-optimized, keyword-stuffed, excessive headings/schema/elements.
+- All scores 0-100. A page ranking on page 45 should NOT get the highest scores just because it has more SEO elements.
+- NEVER equate "more features" with "better ranking potential".
+- Base scores on RANKING REALITY: pages that rank higher should generally score higher on ranking-correlated dimensions."""
+
+    user_prompt = f"""Analyze these pages that rank for the same query. Study what Google is rewarding in the top-ranking pages, then evaluate all pages against those learned preferences.
+
+{page_blocks}
+
+{"The main page (Your Page) needs diagnosis: why is it ranked where it is? Learn from what the top-ranking competitors do differently." if has_main else "Compare these competitor pages to understand what Google prefers for this query."}
+
+Return the complete JSON analysis."""
+
+    return system_prompt, user_prompt
+
+
 def _build_full_compare_prompt(your_content, your_wc, your_max, fetched, competitor_blocks):
     """Build system/user prompts for user-content-vs-competitors comparison."""
     num_comp = len(fetched)
@@ -1226,96 +1363,150 @@ Perform a deep, section-by-section comparison covering SERP presence, content qu
     return system_prompt, user_prompt
 
 
+_POS_LABELS = {
+    "top3": "Top 3 (Position 1-3)",
+    "top10": "Page 1 (Position 4-10)",
+    "page2": "Page 2 (Position 11-20)",
+    "page3_5": "Page 3-5 (Position 21-50)",
+    "page5plus": "Page 5+ (Position 50+)",
+    "not_ranking": "Not ranking",
+    "unknown": "Unknown",
+}
+
+
 @app.post("/api/content-compare")
 async def content_compare(request: Request):
-    """Deep comparison: user content vs competitors, or competitor vs competitor."""
+    """Ranking-aware comparison: learn what Google prefers, evaluate your page."""
     form = await request.form()
+    main_url = form.get("main_url", "").strip()
+    main_position = form.get("main_position", "")
     your_content = form.get("your_content", "").strip()
     model = form.get("model", "")
     competitor_urls_json = form.get("competitor_urls", "[]")
+    competitor_positions_json = form.get("competitor_positions", "[]")
 
     try:
         competitor_urls = json.loads(competitor_urls_json)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid competitor_urls JSON.")
+    try:
+        comp_positions = json.loads(competitor_positions_json)
+    except json.JSONDecodeError:
+        comp_positions = []
 
     competitor_urls = [u.strip() for u in competitor_urls if u.strip()]
+    while len(comp_positions) < len(competitor_urls):
+        comp_positions.append("")
     if not competitor_urls:
         raise HTTPException(status_code=422, detail="Provide at least one competitor URL.")
     if len(competitor_urls) > 10:
-        raise HTTPException(status_code=422, detail="Maximum 10 competitor URLs allowed.")
+        raise HTTPException(status_code=422, detail="Maximum 10 competitor URLs.")
+
+    has_main = bool(main_url)
+    has_content = bool(your_content)
+    if not has_main and not has_content and len(competitor_urls) < 2:
+        raise HTTPException(status_code=422, detail="Without a main URL, provide at least 2 competitor URLs.")
 
     model_to_use = model if model else DEFAULT_MODEL
     set_model(model_to_use)
-
-    import asyncio
 
     async def safe_fetch(url: str, label: str) -> dict:
         try:
             html = await _fetch_page_html(url)
             text, wc = await _fetch_and_extract(url)
             context = _extract_page_context(html, url)
-            return {"url": url, "text": text, "word_count": wc, "label": label, "context": context, "error": None}
+            return {"url": url, "text": text, "word_count": wc, "label": label,
+                    "context": context, "error": None}
         except Exception as e:
-            return {"url": url, "text": "", "word_count": 0, "label": label, "context": {}, "error": str(e)}
+            return {"url": url, "text": "", "word_count": 0, "label": label,
+                    "context": {}, "error": str(e)}
 
-    fetch_tasks = [
-        safe_fetch(url, f"Competitor {i+1}")
-        for i, url in enumerate(competitor_urls)
-    ]
-    fetched = await asyncio.gather(*fetch_tasks)
+    all_tasks = []
+    if has_main:
+        all_tasks.append(safe_fetch(main_url, "Your Page"))
+    for i, url in enumerate(competitor_urls):
+        all_tasks.append(safe_fetch(url, f"Competitor {i+1}"))
 
-    for f in fetched:
+    fetched_all = await asyncio.gather(*all_tasks)
+
+    for f in fetched_all:
         if f["error"]:
-            raise HTTPException(status_code=422, detail=f"Failed to fetch {f['label']} ({f['url']}): {f['error']}")
+            raise HTTPException(status_code=422,
+                                detail=f"Failed to fetch {f['label']} ({f['url']}): {f['error']}")
 
-    has_your_content = bool(your_content)
-    your_wc = len(your_content.split()) if has_your_content else 0
-    num_comp = len(fetched)
-    comp_only = not has_your_content
+    main_data = fetched_all[0] if has_main else None
+    comp_data = fetched_all[1:] if has_main else fetched_all
+    num_total = len(fetched_all)
+    total_budget = 50000
+    per_page = total_budget // max(num_total, 1)
 
-    if comp_only and num_comp < 2:
-        raise HTTPException(status_code=422, detail="Provide at least 2 competitor URLs when comparing without your own content.")
+    # Attach position info
+    if main_data:
+        main_data["position"] = _POS_LABELS.get(main_position, "")
+    for i, f in enumerate(comp_data):
+        pos = comp_positions[i] if i < len(comp_positions) else ""
+        f["position"] = _POS_LABELS.get(pos, "")
 
-    your_max = 30000
-    total_comp_budget = 40000
-    comp_max = total_comp_budget // num_comp
-
-    competitor_blocks = ""
-    for f in fetched:
-        ctx = f.get("context", {})
-        ctx_summary = _format_context_for_prompt(ctx)
-        competitor_blocks += (
+    # Build page blocks
+    def _page_block(f: dict, max_chars: int) -> str:
+        ctx = _format_context_for_prompt(f.get("context", {}))
+        pos_line = f"\nRanking Position: {f['position']}" if f.get("position") else ""
+        return (
             f"\n\n--- {f['label'].upper()} (URL: {f['url']}, {f['word_count']} words) ---"
-            f"\n\n[PAGE CONTEXT]\n{ctx_summary}\n[END PAGE CONTEXT]"
-            f"\n\n[CONTENT]\n{f['text'][:comp_max]}\n[END CONTENT]"
+            f"{pos_line}"
+            f"\n\n[PAGE CONTEXT]\n{ctx}\n[END PAGE CONTEXT]"
+            f"\n\n[CONTENT]\n{f['text'][:max_chars]}\n[END CONTENT]"
             f"\n--- END {f['label'].upper()} ---"
         )
 
-    if comp_only:
-        system_prompt, user_prompt = _build_competitor_only_prompt(fetched, competitor_blocks, comp_max)
-    else:
-        system_prompt, user_prompt = _build_full_compare_prompt(
-            your_content, your_wc, your_max, fetched, competitor_blocks,
-        )
+    page_blocks = ""
+    if main_data:
+        page_blocks += _page_block(main_data, per_page)
+    for f in comp_data:
+        page_blocks += _page_block(f, per_page)
+
+    system_prompt, user_prompt = _build_ranking_analysis_prompt(
+        main_data, comp_data, page_blocks, has_main,
+    )
+
+    token_budget = 8192 + (num_total * 3000)
+    token_budget = min(token_budget, 32768)
 
     try:
         result = await llm_review(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=model_to_use,
+            max_tokens=token_budget,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM comparison failed: {e}")
 
     if result.get("parse_error"):
-        raise HTTPException(status_code=500, detail="Failed to parse LLM comparison response.")
+        raw = result.get("raw_response", "")
+        if raw:
+            log.warning(f"Comparison JSON parse failed ({len(raw)} chars) — attempting repair")
+            repaired = raw.rstrip()
+            for _ in range(20):
+                if repaired.endswith(","):
+                    repaired = repaired[:-1]
+                else:
+                    break
+            opens_b = repaired.count("[") - repaired.count("]")
+            opens_c = repaired.count("{") - repaired.count("}")
+            repaired += "]" * max(opens_b, 0) + "}" * max(opens_c, 0)
+            try:
+                result = json.loads(repaired)
+                log.info("JSON repair succeeded")
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="LLM response too large to parse. Try fewer competitors.",
+                )
 
     result["model_used"] = model_to_use
-
     report_id = _save_comparison_report(result)
     result["report_id"] = report_id
-
     return result
 
 
@@ -2382,6 +2573,1267 @@ async def download_comparison_pdf(request: Request):
         content=buf.getvalue(),
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="comparison_report.pdf"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Content Gap Analyzer — Sitemap Discovery, Crawling & Gap Analysis
+# ---------------------------------------------------------------------------
+
+_SITEMAP_NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+_GAP_MAX_URLS = 500
+_GAP_METADATA_CONCURRENCY = 10
+
+_CMS_SITEMAP_PATHS: dict[str, list[str]] = {
+    "wordpress_core": ["/wp-sitemap.xml"],
+    "wordpress_yoast": ["/sitemap_index.xml", "/post-sitemap.xml", "/page-sitemap.xml"],
+    "wordpress_rankmath": ["/sitemap_index.xml"],
+    "wordpress_aioseo": ["/sitemap.xml"],
+    "shopify": ["/sitemap.xml"],
+    "ghost": ["/sitemap.xml", "/sitemap-posts.xml", "/sitemap-pages.xml"],
+    "general": ["/sitemap.xml", "/sitemap_index.xml", "/sitemap.xml.gz",
+                "/post-sitemap.xml", "/page-sitemap.xml", "/blog-sitemap.xml",
+                "/wp-sitemap.xml"],
+}
+
+_BLOG_URL_RE = re.compile(
+    r"/(blog|news|magazine|articles?|insights?|resources|journal|stories|posts?|updates?|press)"
+    r"|/\d{4}/\d{2}/",
+    re.IGNORECASE,
+)
+_LANDING_URL_RE = re.compile(
+    r"/(services?|products?|features?|solutions?|pricing|about|contact|platform|"
+    r"integrations?|demo|trial|signup|enterprise)/?$",
+    re.IGNORECASE,
+)
+_SKIP_URL_RE = re.compile(
+    r"/(tag|category|categories|author|authors|page/\d|feed|rss|amp|print|embed|"
+    r"attachment|wp-content|wp-admin|cart|checkout|account|login|search)"
+    r"|#|\.(pdf|jpg|jpeg|png|gif|svg|css|js|xml|zip|mp4|mp3)$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_domain(raw: str) -> str:
+    raw = raw.strip().rstrip("/")
+    if not raw.startswith("http"):
+        raw = f"https://{raw}"
+    return raw
+
+
+async def _gap_fetch(url: str, timeout: float = 15.0,
+                     accept: str = "*/*") -> httpx.Response | None:
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True, timeout=timeout,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": accept,
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+            },
+        ) as client:
+            resp = await client.get(url)
+            if resp.status_code < 400:
+                return resp
+            resp._gap_error = f"HTTP {resp.status_code}"
+            return resp
+    except Exception as e:
+        return None
+
+
+def _gap_resp_ok(resp: httpx.Response | None) -> bool:
+    """Check if a gap_fetch response is usable (not None, not error status)."""
+    return resp is not None and resp.status_code < 400
+
+
+def _detect_cms(html: str) -> str | None:
+    hl = html.lower()
+    if "wp-content" in hl or "wp-includes" in hl or 'name="generator" content="wordpress' in hl:
+        if "yoast" in hl:
+            return "wordpress_yoast"
+        if "rank math" in hl or "rank-math" in hl:
+            return "wordpress_rankmath"
+        if "aioseo" in hl or "all in one seo" in hl:
+            return "wordpress_aioseo"
+        return "wordpress_core"
+    if "shopify" in hl or "cdn.shopify" in hl:
+        return "shopify"
+    if '"ghost"' in hl or "ghost.io" in hl or 'name="generator" content="ghost' in hl:
+        return "ghost"
+    if "squarespace" in hl:
+        return "squarespace"
+    if "wix.com" in hl:
+        return "wix"
+    if "webflow" in hl:
+        return "webflow"
+    return None
+
+
+async def _discover_sitemaps(domain: str) -> dict:
+    base = _normalize_domain(domain)
+    parsed = urlparse(base)
+    clean_domain = parsed.netloc or parsed.path.split("/")[0]
+
+    result: dict[str, Any] = {
+        "domain": clean_domain,
+        "base_url": base,
+        "discovery_method": [],
+        "cms_detected": None,
+        "sitemap_urls_found": [],
+        "errors": [],
+    }
+    found_sitemaps: set[str] = set()
+
+    # Strategy 1: robots.txt
+    resp = await _gap_fetch(f"{base}/robots.txt")
+    if resp and resp.status_code == 200:
+        for line in resp.text.splitlines():
+            if line.strip().lower().startswith("sitemap:"):
+                sm_url = line.split(":", 1)[1].strip()
+                if sm_url:
+                    found_sitemaps.add(sm_url)
+                    if "robots.txt" not in result["discovery_method"]:
+                        result["discovery_method"].append("robots.txt")
+
+    # Strategy 2: CMS-aware probing
+    homepage_resp = await _gap_fetch(base, accept="text/html")
+    if homepage_resp and homepage_resp.status_code == 200:
+        cms = _detect_cms(homepage_resp.text)
+        result["cms_detected"] = cms
+        if cms and cms in _CMS_SITEMAP_PATHS:
+            for path in _CMS_SITEMAP_PATHS[cms]:
+                sm_url = f"{base}{path}"
+                if sm_url not in found_sitemaps:
+                    r2 = await _gap_fetch(sm_url, accept="application/xml, text/xml, */*")
+                    if r2 and ("<urlset" in r2.text or "<sitemapindex" in r2.text):
+                        found_sitemaps.add(sm_url)
+                        if "CMS probe" not in " ".join(result["discovery_method"]):
+                            result["discovery_method"].append(f"CMS probe ({cms})")
+
+    # Strategy 3: Fallback common paths
+    if not found_sitemaps:
+        for path in _CMS_SITEMAP_PATHS["general"]:
+            sm_url = f"{base}{path}"
+            r2 = await _gap_fetch(sm_url, accept="application/xml, text/xml, */*")
+            if r2 and r2.status_code == 200:
+                text = r2.text
+                if path.endswith(".gz"):
+                    try:
+                        text = gzip.decompress(r2.content).decode("utf-8")
+                    except Exception:
+                        continue
+                if "<urlset" in text or "<sitemapindex" in text:
+                    found_sitemaps.add(sm_url)
+                    if "fallback probe" not in result["discovery_method"]:
+                        result["discovery_method"].append("fallback probe")
+                    break
+
+    result["sitemap_urls_found"] = list(found_sitemaps)
+    if not found_sitemaps:
+        result["errors"].append("No sitemaps found")
+    return result
+
+
+async def _parse_sitemap(
+    sitemap_url: str, max_depth: int = 3,
+    _seen: set | None = None, _depth: int = 0,
+) -> dict:
+    if _seen is None:
+        _seen = set()
+    if sitemap_url in _seen or _depth > max_depth:
+        return {"sitemap_tree": [], "urls": [], "errors": []}
+
+    _seen.add(sitemap_url)
+    result: dict[str, Any] = {"sitemap_tree": [], "urls": [], "errors": []}
+
+    resp = await _gap_fetch(sitemap_url, accept="application/xml, text/xml, */*")
+    if not resp:
+        result["errors"].append(f"Connection failed: {sitemap_url}")
+        return result
+    if resp.status_code >= 400:
+        result["errors"].append(f"HTTP {resp.status_code} (not found): {sitemap_url}")
+        return result
+
+    xml_text = resp.text
+    if sitemap_url.endswith(".gz"):
+        try:
+            xml_text = gzip.decompress(resp.content).decode("utf-8")
+        except Exception as e:
+            result["errors"].append(f"Gzip error: {sitemap_url}: {e}")
+            return result
+
+    if "<urlset" not in xml_text and "<sitemapindex" not in xml_text:
+        result["errors"].append(f"Not a valid sitemap (no XML urlset/index): {sitemap_url}")
+        return result
+
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        result["errors"].append(f"XML parse error: {sitemap_url}: {e}")
+        return result
+
+    root_tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
+
+    if root_tag == "sitemapindex":
+        children = []
+        for sm_el in root.findall(f"{_SITEMAP_NS}sitemap"):
+            loc_el = sm_el.find(f"{_SITEMAP_NS}loc")
+            if loc_el is not None and loc_el.text:
+                child_url = loc_el.text.strip()
+                child = await _parse_sitemap(child_url, max_depth, _seen, _depth + 1)
+                children.append({
+                    "url": child_url, "type": "child_sitemap",
+                    "url_count": len(child["urls"]),
+                })
+                result["urls"].extend(child["urls"])
+                result["errors"].extend(child["errors"])
+        result["sitemap_tree"].append({
+            "url": sitemap_url, "type": "index", "children": children,
+        })
+
+    elif root_tag == "urlset":
+        extracted = []
+        for url_el in root.findall(f"{_SITEMAP_NS}url"):
+            loc_el = url_el.find(f"{_SITEMAP_NS}loc")
+            if loc_el is None or not loc_el.text:
+                continue
+            entry: dict[str, str] = {"url": loc_el.text.strip()}
+            lm_el = url_el.find(f"{_SITEMAP_NS}lastmod")
+            if lm_el is not None and lm_el.text:
+                entry["lastmod"] = lm_el.text.strip()
+            cf_el = url_el.find(f"{_SITEMAP_NS}changefreq")
+            if cf_el is not None and cf_el.text:
+                entry["changefreq"] = cf_el.text.strip()
+            pr_el = url_el.find(f"{_SITEMAP_NS}priority")
+            if pr_el is not None and pr_el.text:
+                entry["priority"] = pr_el.text.strip()
+            extracted.append(entry)
+        result["urls"] = extracted
+        result["sitemap_tree"].append({
+            "url": sitemap_url, "type": "urlset", "url_count": len(extracted),
+        })
+    else:
+        result["errors"].append(f"Unknown root element: {root_tag} in {sitemap_url}")
+
+    return result
+
+
+def _classify_gap_urls(urls: list[dict], domain: str) -> dict:
+    parsed_domain = urlparse(_normalize_domain(domain)).netloc
+    blog_posts, landing_pages, other = [], [], []
+
+    for entry in urls:
+        url = entry.get("url", "")
+        parsed = urlparse(url)
+        if parsed.netloc and parsed.netloc != parsed_domain and \
+                not parsed.netloc.endswith(f".{parsed_domain}"):
+            continue
+        path = parsed.path.rstrip("/")
+        if _SKIP_URL_RE.search(path):
+            other.append(entry)
+            continue
+        if not path or path == "/":
+            landing_pages.append(entry)
+            continue
+        segments = [s for s in path.strip("/").split("/") if s]
+        depth = len(segments)
+        if _BLOG_URL_RE.search(path):
+            blog_posts.append(entry)
+        elif _LANDING_URL_RE.search(path) or depth <= 2:
+            landing_pages.append(entry)
+        elif depth >= 3:
+            blog_posts.append(entry)
+        else:
+            other.append(entry)
+
+    return {
+        "blog_posts": blog_posts, "landing_pages": landing_pages,
+        "other": other,
+        "total": len(blog_posts) + len(landing_pages) + len(other),
+    }
+
+
+def _compute_freshness(urls: list[dict]) -> dict:
+    now = datetime.now()
+    dates: list[datetime] = []
+    for entry in urls:
+        lm = entry.get("lastmod", "")
+        if not lm:
+            continue
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%SZ"):
+            try:
+                dates.append(datetime.strptime(lm[:19], fmt[:19]))
+                break
+            except ValueError:
+                continue
+
+    if not dates:
+        return {"oldest_lastmod": None, "newest_lastmod": None,
+                "pct_with_lastmod": 0,
+                "last_30d": 0, "last_90d": 0, "last_180d": 0, "last_365d": 0}
+
+    dates.sort()
+    total = max(len(urls), 1)
+    return {
+        "oldest_lastmod": dates[0].strftime("%Y-%m-%d"),
+        "newest_lastmod": dates[-1].strftime("%Y-%m-%d"),
+        "pct_with_lastmod": round(len(dates) / total * 100),
+        "last_30d": sum(1 for d in dates if (now - d).days <= 30),
+        "last_90d": sum(1 for d in dates if (now - d).days <= 90),
+        "last_180d": sum(1 for d in dates if (now - d).days <= 180),
+        "last_365d": sum(1 for d in dates if (now - d).days <= 365),
+    }
+
+
+async def _extract_page_meta_single(url: str) -> dict:
+    from bs4 import BeautifulSoup
+    meta: dict[str, Any] = {
+        "url": url, "title": "", "h1": "",
+        "meta_description": "", "meta_keywords": "",
+        "published_date": "", "canonical": "",
+        "word_count_estimate": 0, "status": "ok",
+    }
+    resp = await _gap_fetch(url, timeout=15, accept="text/html")
+    if not resp:
+        meta["status"] = "fetch_failed"
+        return meta
+    try:
+        soup = BeautifulSoup(resp.text, "html.parser")
+    except Exception:
+        meta["status"] = "parse_failed"
+        return meta
+
+    t = soup.find("title")
+    if t:
+        meta["title"] = t.get_text(strip=True)[:200]
+    h1 = soup.find("h1")
+    if h1:
+        meta["h1"] = h1.get_text(strip=True)[:200]
+    desc = soup.find("meta", attrs={"name": "description"})
+    if desc and desc.get("content"):
+        meta["meta_description"] = desc["content"].strip()[:300]
+    kw = soup.find("meta", attrs={"name": "keywords"})
+    if kw and kw.get("content"):
+        meta["meta_keywords"] = kw["content"].strip()[:300]
+    can = soup.find("link", attrs={"rel": "canonical"})
+    if can and can.get("href"):
+        meta["canonical"] = can["href"].strip()
+
+    pub_date = ""
+    og_date = soup.find("meta", attrs={"property": "article:published_time"})
+    if og_date and og_date.get("content"):
+        pub_date = og_date["content"].strip()[:10]
+    if not pub_date:
+        time_el = soup.find("time")
+        if time_el:
+            pub_date = (time_el.get("datetime") or time_el.get_text(strip=True))[:10]
+    if not pub_date:
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                sd = json.loads(script.string or "")
+                if isinstance(sd, dict) and "datePublished" in sd:
+                    pub_date = str(sd["datePublished"])[:10]
+                    break
+                if isinstance(sd, list):
+                    for item in sd:
+                        if isinstance(item, dict) and "datePublished" in item:
+                            pub_date = str(item["datePublished"])[:10]
+                            break
+            except Exception:
+                pass
+    meta["published_date"] = pub_date
+
+    body = soup.find("body")
+    if body:
+        for tag in body(["script", "style", "noscript"]):
+            tag.decompose()
+        meta["word_count_estimate"] = len(body.get_text(separator=" ", strip=True).split())
+    return meta
+
+
+async def _batch_extract_metadata(urls: list[str], concurrency: int = 10) -> list[dict]:
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _limited(u: str):
+        async with sem:
+            return await _extract_page_meta_single(u)
+
+    return list(await asyncio.gather(*[_limited(u) for u in urls]))
+
+
+def _build_arch_profile(domain: str, classified: dict,
+                        metadata_list: list[dict],
+                        all_urls: list[dict]) -> dict:
+    now = datetime.now()
+    monthly_counts: Counter[str] = Counter()
+    recent_content: list[dict] = []
+
+    blog_url_set = {e.get("url") for e in classified.get("blog_posts", [])}
+
+    for m in metadata_list:
+        ds = m.get("published_date", "")
+        if not ds or len(ds) < 7:
+            continue
+        ym = ds[:7]
+        monthly_counts[ym] += 1
+        try:
+            d = datetime.strptime(ds[:10], "%Y-%m-%d")
+            if (now - d).days <= 90:
+                recent_content.append({
+                    "url": m["url"], "title": m.get("title", ""),
+                    "published_date": ds[:10],
+                    "type": "blog_post" if m["url"] in blog_url_set else "landing_page",
+                })
+        except ValueError:
+            pass
+
+    months_12 = [(now - timedelta(days=i * 30)).strftime("%Y-%m") for i in range(11, -1, -1)]
+    posts_12 = [monthly_counts.get(ym, 0) for ym in months_12]
+    total_12 = sum(posts_12)
+    avg = round(total_12 / 12, 1) if total_12 else 0.0
+
+    freq = ("daily" if avg >= 20 else "3x_week" if avg >= 12
+            else "2x_week" if avg >= 8 else "weekly" if avg >= 4
+            else "bi-weekly" if avg >= 2 else "monthly")
+
+    titles = [m["title"] for m in metadata_list if m.get("title")]
+    descs = [m["meta_description"] for m in metadata_list if m.get("meta_description")]
+    ml = max(len(metadata_list), 1)
+
+    depths = []
+    for m in metadata_list:
+        p = urlparse(m.get("url", "")).path
+        depths.append(len([s for s in p.strip("/").split("/") if s]))
+
+    recent_content.sort(key=lambda x: x.get("published_date", ""), reverse=True)
+
+    return {
+        "domain": domain,
+        "publishing_cadence": {
+            "posts_last_12_months": posts_12, "months_labels": months_12,
+            "avg_per_month": avg, "frequency": freq, "total_last_12_months": total_12,
+        },
+        "freshness_distribution": _compute_freshness(all_urls),
+        "meta_quality": {
+            "avg_title_len": round(sum(len(t) for t in titles) / max(len(titles), 1)),
+            "avg_desc_len": round(sum(len(d) for d in descs) / max(len(descs), 1)),
+            "pct_missing_desc": round((1 - len(descs) / ml) * 100),
+            "total_pages_analyzed": len(metadata_list),
+        },
+        "structural": {"avg_url_depth": round(sum(depths) / max(len(depths), 1), 1)},
+        "recent_content": recent_content[:20],
+    }
+
+
+async def _llm_infer_topics(domain: str, metadata_batch: list[dict],
+                            model: str) -> dict:
+    page_lines = []
+    for i, m in enumerate(metadata_batch):
+        if m.get("status") != "ok":
+            continue
+        slug = urlparse(m["url"]).path.rstrip("/").split("/")[-1] if m["url"] else ""
+        line = f"{i+1}. URL: {m['url']}"
+        if m.get("title"):
+            line += f" | Title: {m['title']}"
+        if m.get("h1") and m["h1"] != m.get("title"):
+            line += f" | H1: {m['h1']}"
+        if m.get("meta_description"):
+            line += f" | Desc: {m['meta_description'][:100]}"
+        if slug:
+            line += f" | Slug: {slug}"
+        if m.get("published_date"):
+            line += f" | Date: {m['published_date']}"
+        page_lines.append(line)
+
+    if not page_lines:
+        return {"topic_clusters": [], "pages": []}
+
+    batch_size = 50
+    all_results: dict[str, list] = {"topic_clusters": [], "pages": []}
+
+    for batch_start in range(0, len(page_lines), batch_size):
+        batch = page_lines[batch_start:batch_start + batch_size]
+
+        system_prompt = (
+            "You are an expert SEO content strategist. Analyze page metadata and infer:\n"
+            "1. Topic clusters (groups of related pages)\n"
+            "2. Primary keyword per page\n"
+            "3. Search intent per page\n"
+            "4. Estimated search volume tier\n\n"
+            "Return JSON:\n"
+            "{\n"
+            '  "topic_clusters": [\n'
+            '    {"cluster_name": "...", "pages": [page_numbers], '
+            '"primary_theme": "...", "estimated_volume": "high|medium|low"}\n'
+            "  ],\n"
+            '  "pages": [\n'
+            '    {"page_num": 1, "inferred_keyword": "...", '
+            '"search_intent": "informational|transactional|commercial|navigational", '
+            '"volume_tier": "high|medium|low", '
+            '"content_type": "blog_post|landing_page|guide|comparison|listicle|how_to"}\n'
+            "  ]\n"
+            "}\n\n"
+            "RULES:\n"
+            "- Infer the most likely target keyword from title, H1, URL slug, description\n"
+            "- Group pages into 5-15 logical topic clusters\n"
+            "- Volume: high=broad demand, medium=niche, low=very specific/long-tail\n"
+            "- Be specific with keywords, not generic descriptions\n"
+            "- Every page must appear in exactly one cluster"
+        )
+        user_prompt = (
+            f"Domain: {domain}\n"
+            f"Page metadata ({len(batch)} pages):\n"
+            + "\n".join(batch)
+            + "\n\nAnalyze and return the JSON."
+        )
+
+        try:
+            r = await llm_review(system_prompt=system_prompt,
+                                 user_prompt=user_prompt, model=model)
+            if not r.get("parse_error"):
+                if batch_start > 0:
+                    for c in r.get("topic_clusters", []):
+                        c["pages"] = [p + batch_start for p in c.get("pages", [])]
+                    for p in r.get("pages", []):
+                        p["page_num"] = p.get("page_num", 0) + batch_start
+                all_results["topic_clusters"].extend(r.get("topic_clusters", []))
+                all_results["pages"].extend(r.get("pages", []))
+        except Exception:
+            pass
+
+    return all_results
+
+
+async def _llm_gap_analysis(your_domain: str, your_topics: dict,
+                            competitor_data: list[dict], model: str) -> dict:
+    your_text = ""
+    if your_topics and your_topics.get("topic_clusters"):
+        your_text = f"\n--- YOUR SITE ({your_domain}) ---\nTopic Clusters:\n"
+        for c in your_topics["topic_clusters"]:
+            your_text += (f"- {c['cluster_name']} ({c.get('estimated_volume','?')} vol, "
+                          f"{len(c.get('pages',[]))} pages): {c.get('primary_theme','')}\n")
+        your_text += "\nPage Keywords:\n"
+        for p in your_topics.get("pages", [])[:100]:
+            your_text += (f"  - [{p.get('search_intent','?')}] "
+                          f"{p.get('inferred_keyword','?')} ({p.get('volume_tier','?')})\n")
+
+    comp_parts = []
+    for cd in competitor_data:
+        ct = f"\n--- COMPETITOR: {cd['domain']} ---\nTopic Clusters:\n"
+        for c in cd.get("topics", {}).get("topic_clusters", []):
+            ct += (f"- {c['cluster_name']} ({c.get('estimated_volume','?')} vol, "
+                   f"{len(c.get('pages',[]))} pages): {c.get('primary_theme','')}\n")
+        ct += "\nPage Keywords:\n"
+        for p in cd.get("topics", {}).get("pages", [])[:100]:
+            ct += (f"  - [{p.get('search_intent','?')}] "
+                   f"{p.get('inferred_keyword','?')} ({p.get('volume_tier','?')})\n")
+        comp_parts.append(ct)
+
+    system_prompt = (
+        "You are an elite SEO strategist performing content gap analysis.\n\n"
+        "Return JSON:\n{\n"
+        '  "gap_matrix": [\n'
+        '    {"topic":"...","inferred_keyword":"...","search_intent":"informational|transactional|commercial|navigational",'
+        '"volume_tier":"high|medium|low","covered_by":["domains"],"your_coverage":"missing|thin|outdated|covered",'
+        '"gap_type":"missing|thin|outdated","opportunity_score":1-10,"priority":"high|medium|low"}\n  ],\n'
+        '  "recommendations": [\n'
+        '    {"suggested_title":"...","content_type":"blog_post|landing_page|guide|comparison|listicle|how_to",'
+        '"target_keyword":"...","secondary_keywords":["..."],"search_intent":"...",'
+        '"priority_score":1-10,"estimated_effort":"low|medium|high",'
+        '"brief_outline":["5-7 sections"],"competing_urls":["..."],"rationale":"..."}\n  ],\n'
+        '  "competitor_overlap": {"most_similar_pair":["d1","d2"],"most_differentiated":"d","insights":"..."},\n'
+        '  "quick_wins": [{"action":"...","target":"...","expected_impact":"high|medium|low","effort":"low|medium|high"}],\n'
+        '  "strategic_moves": [{"action":"...","rationale":"...","expected_impact":"..."}]\n}\n\n'
+        "RULES:\n"
+        "- Focus on HIGH and MEDIUM volume gaps first\n"
+        "- Identify 10-20 content gaps\n"
+        "- Generate 10-15 specific recommendations ranked by priority\n"
+        "- Be SPECIFIC with keywords\n"
+        "- opportunity_score: 10=must-have, 1=nice-to-have\n"
+        "- If no user site data, all gaps are 'missing' type"
+    )
+    user_prompt = (
+        "Perform content gap analysis.\n"
+        + (your_text or "(No user site — identify all competitor topics as gaps)\n")
+        + "\n".join(comp_parts)
+        + "\n\nReturn the complete JSON."
+    )
+
+    try:
+        r = await llm_review(system_prompt=system_prompt,
+                             user_prompt=user_prompt, model=model)
+        if r.get("parse_error"):
+            return {"gap_matrix": [], "recommendations": [],
+                    "error": "Failed to parse LLM response"}
+        return r
+    except Exception as e:
+        return {"gap_matrix": [], "recommendations": [], "error": str(e)}
+
+
+async def _llm_content_calendar(recommendations: list[dict],
+                                config: dict, model: str) -> dict:
+    freq = config.get("frequency", "weekly")
+    horizon = config.get("horizon_months", 3)
+    start_date = config.get("start_date", "")
+
+    freq_map = {"daily": 5, "3x_week": 3, "2x_week": 2,
+                "weekly": 1, "biweekly": 0.5, "monthly": 0.25}
+    ppw = freq_map.get(freq, 1)
+    total_weeks = horizon * 4
+    total_pieces = int(ppw * total_weeks)
+
+    recs_text = ""
+    for i, r in enumerate(recommendations[:30], 1):
+        recs_text += (
+            f"{i}. Title: {r.get('suggested_title','?')}\n"
+            f"   Keyword: {r.get('target_keyword','?')} | Type: {r.get('content_type','?')}\n"
+            f"   Intent: {r.get('search_intent','?')} | Priority: {r.get('priority_score','?')}/10"
+            f" | Effort: {r.get('estimated_effort','?')}\n"
+        )
+        if r.get("brief_outline"):
+            recs_text += f"   Outline: {' | '.join(r['brief_outline'][:5])}\n"
+        recs_text += "\n"
+
+    system_prompt = (
+        f"You are a content strategist creating a publishing calendar.\n\n"
+        f"Frequency: {freq} ({ppw} pieces/week)\n"
+        f"Horizon: {horizon} months (~{total_weeks} weeks)\n"
+        f"Start: {start_date or 'next Monday'}\n"
+        f"Target: ~{total_pieces} pieces\n\n"
+        "Return JSON:\n{\n"
+        '  "config": {"frequency":"...","horizon_months":N,"start_date":"YYYY-MM-DD","total_pieces":N},\n'
+        '  "monthly_themes": [{"month":"Month Year","theme":"...","pieces":N}],\n'
+        '  "calendar": [\n'
+        '    {"week":1,"week_start":"YYYY-MM-DD","entries":[\n'
+        '      {"publish_date":"YYYY-MM-DD","title":"...","content_type":"blog_post|landing_page",'
+        '"target_keyword":"...","search_intent":"...","priority_score":1-10,'
+        '"estimated_effort":"low|medium|high","is_pillar":false,'
+        '"dependencies":[],"seasonal_note":null,"brief_points":["3-5 points"]}\n'
+        "    ]}\n  ],\n"
+        '  "milestones": [{"week":N,"label":"..."}],\n'
+        '  "summary": {"total_blog_posts":N,"total_landing_pages":N,"high_priority_pieces":N,'
+        '"pillar_pages":N,"estimated_total_effort":"..."}\n}\n\n'
+        "RULES:\n"
+        "- Schedule pillar pages BEFORE cluster posts\n"
+        "- Group related topics into 2-3 week sprints\n"
+        "- Alternate content types for variety\n"
+        "- Mix difficulty levels within each week\n"
+        "- Add milestone markers at key points\n"
+        "- Each entry needs 3-5 brief_points"
+    )
+    user_prompt = (
+        f"Create a content calendar from these topics:\n\n{recs_text}\n"
+        f"Schedule into {horizon} months starting {start_date or 'next Monday'}, "
+        f"publishing {freq}. Return JSON."
+    )
+
+    try:
+        r = await llm_review(system_prompt=system_prompt,
+                             user_prompt=user_prompt, model=model)
+        if r.get("parse_error"):
+            return {"error": "Failed to parse calendar", "calendar": []}
+        return r
+    except Exception as e:
+        return {"error": str(e), "calendar": []}
+
+
+# ---------------------------------------------------------------------------
+# Content Gap API Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/content-gap/discover")
+async def content_gap_discover(request: Request):
+    form = await request.form()
+    domain = form.get("domain", "").strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain is required.")
+
+    discovery = await _discover_sitemaps(domain)
+
+    all_urls: list[dict] = []
+    sitemap_tree: list[dict] = []
+    errors = list(discovery.get("errors", []))
+
+    for sm_url in discovery["sitemap_urls_found"]:
+        pr = await _parse_sitemap(sm_url)
+        sitemap_tree.extend(pr["sitemap_tree"])
+        all_urls.extend(pr["urls"])
+        errors.extend(pr["errors"])
+
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for e in all_urls:
+        u = e["url"].rstrip("/")
+        if u not in seen:
+            seen.add(u)
+            unique.append(e)
+
+    if len(unique) > _GAP_MAX_URLS:
+        unique.sort(key=lambda x: x.get("lastmod", ""), reverse=True)
+        unique = unique[:_GAP_MAX_URLS]
+
+    classified = _classify_gap_urls(unique, domain)
+    freshness = _compute_freshness(unique)
+
+    return {
+        "stage_1_sitemap": {
+            "domain": discovery["domain"],
+            "discovery_method": " + ".join(discovery["discovery_method"]) or "none",
+            "cms_detected": discovery.get("cms_detected"),
+            "sitemap_tree": sitemap_tree,
+            "url_summary": {
+                "total": classified["total"],
+                "blogs": len(classified["blog_posts"]),
+                "landing_pages": len(classified["landing_pages"]),
+                "other": len(classified["other"]),
+            },
+            "freshness": freshness,
+            "errors": errors,
+        }
+    }
+
+
+@app.post("/api/content-gap/analyze")
+async def content_gap_analyze(request: Request):
+    """Streaming gap analysis — sends SSE events as each stage completes."""
+    form = await request.form()
+    your_domain = form.get("your_domain", "").strip()
+    your_urls_json = form.get("your_urls", "[]")
+    comp_domains_json = form.get("competitor_domains", "[]")
+    model = form.get("model", "") or DEFAULT_MODEL
+    pub_freq = form.get("publishing_frequency", "weekly")
+    cal_horizon = form.get("calendar_horizon", "3")
+    cal_start = form.get("calendar_start_date", "")
+
+    set_model(model)
+
+    try:
+        comp_domains = json.loads(comp_domains_json)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid competitor_domains.")
+    try:
+        your_urls = json.loads(your_urls_json) if your_urls_json.strip() else []
+    except json.JSONDecodeError:
+        your_urls = []
+
+    comp_domains = [d.strip() for d in comp_domains if d.strip()]
+    if not comp_domains:
+        raise HTTPException(status_code=422, detail="Provide at least one competitor domain.")
+    if len(comp_domains) > 5:
+        raise HTTPException(status_code=422, detail="Maximum 5 competitor domains.")
+
+    def _sse(event: str, data: Any) -> str:
+        payload = json.dumps(data, ensure_ascii=False, default=str)
+        return f"event: {event}\ndata: {payload}\n\n"
+
+    effective_your_domain = your_domain
+
+    async def _stream():
+        nonlocal effective_your_domain
+        full_result: dict[str, Any] = {"model_used": model}
+
+        # ── STAGE 1 ──
+        log.info("GAP: Stage 1 — Sitemap discovery")
+        all_doms: list[tuple[str, str]] = []
+        if effective_your_domain:
+            all_doms.append(("your", effective_your_domain))
+        for cd in comp_domains:
+            all_doms.append(("competitor", cd))
+
+        stage_1_data: dict[str, dict] = {}
+        for role, dom in all_doms:
+            log.info(f"  Discovering {dom}...")
+            disc = await _discover_sitemaps(dom)
+            raw: list[dict] = []
+            stree: list[dict] = []
+            errs = list(disc.get("errors", []))
+            for sm in disc["sitemap_urls_found"]:
+                pr = await _parse_sitemap(sm)
+                stree.extend(pr["sitemap_tree"])
+                raw.extend(pr["urls"])
+                errs.extend(pr["errors"])
+            seen: set[str] = set()
+            uniq: list[dict] = []
+            for e in raw:
+                u = e["url"].rstrip("/")
+                if u not in seen:
+                    seen.add(u)
+                    uniq.append(e)
+            if len(uniq) > _GAP_MAX_URLS:
+                uniq.sort(key=lambda x: x.get("lastmod", ""), reverse=True)
+                uniq = uniq[:_GAP_MAX_URLS]
+            cl = _classify_gap_urls(uniq, dom)
+            log.info(f"  {dom}: {cl['total']} URLs")
+            stage_1_data[dom] = {
+                "role": role, "domain": disc["domain"],
+                "discovery_method": " + ".join(disc["discovery_method"]) or "none",
+                "cms_detected": disc.get("cms_detected"), "sitemap_tree": stree,
+                "url_summary": {"total": cl["total"], "blogs": len(cl["blog_posts"]),
+                                "landing_pages": len(cl["landing_pages"]),
+                                "other": len(cl["other"])},
+                "freshness": _compute_freshness(uniq),
+                "classified": cl, "all_urls": uniq, "errors": errs,
+            }
+
+        if your_urls and not effective_your_domain:
+            effective_your_domain = "your_site"
+            manual = [{"url": u.strip()} for u in your_urls if u.strip()]
+            cl = _classify_gap_urls(manual, "your_site")
+            stage_1_data["your_site"] = {
+                "role": "your", "domain": "your_site",
+                "discovery_method": "manual input", "cms_detected": None,
+                "sitemap_tree": [], "url_summary": {
+                    "total": len(manual), "blogs": len(cl["blog_posts"]),
+                    "landing_pages": len(cl["landing_pages"]),
+                    "other": len(cl["other"])},
+                "freshness": {}, "classified": cl, "all_urls": manual, "errors": [],
+            }
+
+        stage_1_out = [{
+            "domain": d["domain"], "role": d["role"],
+            "discovery_method": d["discovery_method"],
+            "cms_detected": d.get("cms_detected"),
+            "sitemap_tree": d["sitemap_tree"],
+            "url_summary": d["url_summary"],
+            "freshness": d.get("freshness", {}),
+            "errors": d.get("errors", []),
+        } for d in stage_1_data.values()]
+        full_result["stage_1_sitemap"] = stage_1_out
+        log.info("GAP: Stage 1 complete — sending to client")
+        yield _sse("stage_1", {"stage_1_sitemap": stage_1_out})
+
+        # ── STAGE 2 ──
+        log.info("GAP: Stage 2 — Metadata extraction")
+        stage_2_meta: dict[str, list[dict]] = {}
+        stage_2_out = []
+        for dom, s1 in stage_1_data.items():
+            cl = s1.get("classified", {})
+            content_urls = [e["url"] for e in
+                            cl.get("blog_posts", []) + cl.get("landing_pages", [])]
+            sample = content_urls[:_GAP_MAX_URLS]
+            log.info(f"  Extracting metadata for {dom}: {len(sample)} pages...")
+            meta = await _batch_extract_metadata(sample, _GAP_METADATA_CONCURRENCY) if sample else []
+            ok = sum(1 for m in meta if m.get("status") == "ok")
+            log.info(f"  {dom}: {ok}/{len(meta)} extracted OK")
+            stage_2_meta[dom] = meta
+            stage_2_out.append(_build_arch_profile(s1["domain"], cl, meta, s1.get("all_urls", [])))
+        full_result["stage_2_architecture"] = stage_2_out
+        log.info("GAP: Stage 2 complete — sending to client")
+        yield _sse("stage_2", {"stage_2_architecture": stage_2_out})
+
+        # ── STAGE 3 ──
+        log.info("GAP: Stage 3 — LLM topic inference")
+        stage_3_data: dict[str, dict] = {}
+        stage_3_out = []
+        for dom, s1 in stage_1_data.items():
+            meta = stage_2_meta.get(dom, [])
+            log.info(f"  Topics for {dom} ({len(meta)} pages)...")
+            topics = (await _llm_infer_topics(s1["domain"], meta, model)
+                      if meta else {"topic_clusters": [], "pages": []})
+            log.info(f"  {dom}: {len(topics.get('topic_clusters', []))} clusters")
+            stage_3_data[dom] = {"domain": s1["domain"], "role": s1["role"], "topics": topics}
+            stage_3_out.append({"domain": s1["domain"], "role": s1["role"],
+                                "topic_clusters": topics.get("topic_clusters", []),
+                                "pages": topics.get("pages", [])})
+        full_result["stage_3_topics"] = stage_3_out
+        log.info("GAP: Stage 3 complete — sending to client")
+        yield _sse("stage_3", {"stage_3_topics": stage_3_out})
+
+        # ── STAGE 4 & 5 ──
+        log.info("GAP: Stage 4+5 — Gap analysis")
+        your_topics = None
+        comp_list = []
+        for dom, s3 in stage_3_data.items():
+            if s3["role"] == "your":
+                your_topics = s3["topics"]
+            else:
+                comp_list.append({"domain": s3["domain"], "topics": s3["topics"]})
+        gap_r = await _llm_gap_analysis(
+            effective_your_domain or "your_site",
+            your_topics or {}, comp_list, model,
+        )
+        log.info(f"GAP: Stage 4+5 complete — {len(gap_r.get('gap_matrix', []))} gaps")
+        stage_4_out = {"gap_matrix": gap_r.get("gap_matrix", []),
+                       "competitor_overlap": gap_r.get("competitor_overlap", {})}
+        stage_5_out = {"recommendations": gap_r.get("recommendations", []),
+                       "quick_wins": gap_r.get("quick_wins", []),
+                       "strategic_moves": gap_r.get("strategic_moves", [])}
+        full_result["stage_4_gaps"] = stage_4_out
+        full_result["stage_5_recommendations"] = stage_5_out
+        yield _sse("stage_4_5", {"stage_4_gaps": stage_4_out,
+                                  "stage_5_recommendations": stage_5_out})
+
+        # ── STAGE 6 ──
+        log.info("GAP: Stage 6 — Content calendar")
+        cal_cfg = {"frequency": pub_freq,
+                   "horizon_months": int(cal_horizon), "start_date": cal_start}
+        stage_6_out = await _llm_content_calendar(
+            gap_r.get("recommendations", []), cal_cfg, model,
+        )
+        full_result["stage_6_calendar"] = stage_6_out
+        log.info("GAP: Stage 6 complete")
+        yield _sse("stage_6", {"stage_6_calendar": stage_6_out})
+
+        # ── COMPLETE ──
+        full_result["generated_at"] = datetime.now().isoformat()
+        report_id = _save_gap_report(full_result)
+        log.info(f"GAP: All stages complete — report {report_id}")
+        yield _sse("complete", {"report_id": report_id,
+                                 "model_used": model,
+                                 "generated_at": full_result["generated_at"]})
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+def _save_gap_report(data: dict) -> str:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    rid = f"gap_{ts}"
+    (REPORTS_DIR / f"{rid}.json").write_text(
+        json.dumps(data, indent=2, ensure_ascii=False, default=str))
+    return rid
+
+
+def _gap_report_to_text(data: dict) -> str:
+    lines = ["=" * 70, "CONTENT GAP ANALYSIS REPORT", "=" * 70, ""]
+
+    lines.append("STAGE 1: SITEMAP INTELLIGENCE")
+    lines.append("-" * 50)
+    for site in data.get("stage_1_sitemap", []):
+        s = site.get("url_summary", {})
+        lines.append(f"\n  {site.get('domain','?')} ({site.get('role','?')})")
+        lines.append(f"  Discovery: {site.get('discovery_method','?')} | CMS: {site.get('cms_detected','-')}")
+        lines.append(f"  Pages: {s.get('total',0)} total | {s.get('blogs',0)} blogs | {s.get('landing_pages',0)} landing")
+        f = site.get("freshness", {})
+        if f.get("newest_lastmod"):
+            lines.append(f"  Latest update: {f['newest_lastmod']} | {f.get('pct_with_lastmod',0)}% dated")
+
+    lines.append("\n\nSTAGE 2: SITE ARCHITECTURE")
+    lines.append("-" * 50)
+    for p in data.get("stage_2_architecture", []):
+        c = p.get("publishing_cadence", {})
+        mq = p.get("meta_quality", {})
+        lines.append(f"\n  {p.get('domain','?')}: {c.get('avg_per_month',0)} posts/mo ({c.get('frequency','?')})")
+        lines.append(f"  Titles avg {mq.get('avg_title_len',0)} chars | Desc avg {mq.get('avg_desc_len',0)} | {mq.get('pct_missing_desc',0)}% missing desc")
+        for rc in p.get("recent_content", [])[:5]:
+            lines.append(f"    [{rc.get('published_date','?')}] {rc.get('title','?')}")
+
+    lines.append("\n\nSTAGE 3: TOPIC LANDSCAPE")
+    lines.append("-" * 50)
+    for td in data.get("stage_3_topics", []):
+        lines.append(f"\n  {td.get('domain','?')} ({td.get('role','?')})")
+        for c in td.get("topic_clusters", []):
+            lines.append(f"    - {c.get('cluster_name','?')} ({c.get('estimated_volume','?')} vol, {len(c.get('pages',[]))} pages)")
+
+    lines.append("\n\nSTAGE 4: CONTENT GAPS")
+    lines.append("-" * 50)
+    for g in data.get("stage_4_gaps", {}).get("gap_matrix", []):
+        lines.append(f"  [{g.get('priority','?').upper()}] {g.get('topic','?')} — {g.get('inferred_keyword','?')}")
+        lines.append(f"    {g.get('search_intent','?')} | {g.get('volume_tier','?')} vol | {g.get('gap_type','?')} | Score: {g.get('opportunity_score','?')}/10")
+
+    lines.append("\n\nSTAGE 5: RECOMMENDATIONS")
+    lines.append("-" * 50)
+    for i, r in enumerate(data.get("stage_5_recommendations", {}).get("recommendations", []), 1):
+        lines.append(f"\n  {i}. {r.get('suggested_title','?')}")
+        lines.append(f"     {r.get('content_type','?')} | {r.get('target_keyword','?')} | Priority: {r.get('priority_score','?')}/10")
+
+    lines.append("\n\nSTAGE 6: CONTENT CALENDAR")
+    lines.append("-" * 50)
+    cal = data.get("stage_6_calendar", {})
+    cfg = cal.get("config", {})
+    lines.append(f"  {cfg.get('frequency','?')} | {cfg.get('horizon_months','?')} months | {cfg.get('total_pieces','?')} pieces")
+    for w in cal.get("calendar", []):
+        lines.append(f"\n  Week {w.get('week','?')} ({w.get('week_start','?')}):")
+        for e in w.get("entries", []):
+            lines.append(f"    [{e.get('publish_date','?')}] {e.get('title','?')} ({e.get('content_type','?')})")
+
+    lines += ["", f"Model: {data.get('model_used','?')}", f"Generated: {data.get('generated_at','')}", "=" * 70]
+    return "\n".join(lines)
+
+
+@app.post("/api/content-gap/download-text")
+async def download_gap_text(request: Request):
+    body = await request.json()
+    return Response(
+        content=_gap_report_to_text(body), media_type="text/plain",
+        headers={"Content-Disposition": 'attachment; filename="content_gap_report.txt"'},
+    )
+
+
+@app.post("/api/content-gap/download-excel")
+async def download_gap_excel(request: Request):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    import io
+
+    data = await request.json()
+    wb = Workbook()
+
+    PUR = "6D28D9"; WHT = "FFFFFF"; DRK = "1E1E1E"; BDY = "374151"; MUT = "6B7280"
+    GRN_BG = "F0FDF4"; ORG_BG = "FFFBEB"; RED_BG = "FEF2F2"; STRIPE = "F3F4F6"
+    PUR_LT = "EDE9FE"
+    hfont = Font(bold=True, size=10, color=WHT)
+    hfill = PatternFill(start_color=PUR, end_color=PUR, fill_type="solid")
+    tfont = Font(bold=True, size=13, color=PUR)
+    bfont = Font(size=9, color=BDY)
+    mfont = Font(size=8, color=MUT)
+    sfont = Font(bold=True, size=10, color=DRK)
+    ts = Side(style="thin", color="D1D5DB")
+    tb = Border(left=ts, right=ts, top=ts, bottom=ts)
+    wt = Alignment(wrap_text=True, vertical="top")
+    wc = Alignment(wrap_text=True, vertical="center", horizontal="center")
+
+    def mk_hdr(ws, row, hdrs, widths=None):
+        for ci, h in enumerate(hdrs, 1):
+            c = ws.cell(row=row, column=ci, value=h)
+            c.font = hfont; c.fill = hfill; c.border = tb; c.alignment = wc
+        if widths:
+            for ci, w in enumerate(widths, 1):
+                ws.column_dimensions[get_column_letter(ci)].width = w
+
+    def pfill(p):
+        if isinstance(p, str):
+            p = p.lower()
+            if p == "high": return PatternFill(start_color=RED_BG, end_color=RED_BG, fill_type="solid")
+            if p == "medium": return PatternFill(start_color=ORG_BG, end_color=ORG_BG, fill_type="solid")
+            return PatternFill(start_color=GRN_BG, end_color=GRN_BG, fill_type="solid")
+        if isinstance(p, (int, float)):
+            if p >= 7: return PatternFill(start_color=RED_BG, end_color=RED_BG, fill_type="solid")
+            if p >= 4: return PatternFill(start_color=ORG_BG, end_color=ORG_BG, fill_type="solid")
+            return PatternFill(start_color=GRN_BG, end_color=GRN_BG, fill_type="solid")
+        return None
+
+    # Sheet 1: Summary
+    ws = wb.active; ws.title = "Executive Summary"; ws.sheet_properties.tabColor = PUR
+    ws.merge_cells("A1:E1"); ws["A1"] = "CONTENT GAP ANALYSIS"; ws["A1"].font = tfont
+    ws.merge_cells("A2:E2")
+    ws["A2"] = f"Generated: {data.get('generated_at','')} | Model: {data.get('model_used','')}"
+    ws["A2"].font = mfont
+    gaps = data.get("stage_4_gaps", {}).get("gap_matrix", [])
+    recs = data.get("stage_5_recommendations", {}).get("recommendations", [])
+    mk_hdr(ws, 4, ["Metric", "Value"], [35, 20])
+    for si, (lbl, val) in enumerate([
+        ("Domains Analyzed", len(data.get("stage_1_sitemap", []))),
+        ("Content Gaps Found", len(gaps)),
+        ("High Priority Gaps", sum(1 for g in gaps if g.get("priority") == "high")),
+        ("Recommendations", len(recs)),
+    ]):
+        r = si + 5
+        ws.cell(row=r, column=1, value=lbl).font = sfont
+        ws.cell(row=r, column=1).border = tb
+        ws.cell(row=r, column=2, value=val).font = bfont
+        ws.cell(row=r, column=2).border = tb; ws.cell(row=r, column=2).alignment = wc
+
+    # Sheet 2: Sitemap Intelligence
+    ws2 = wb.create_sheet("Sitemap Intelligence"); ws2.sheet_properties.tabColor = "3B82F6"
+    ws2.merge_cells("A1:G1"); ws2["A1"] = "SITEMAP INTELLIGENCE"; ws2["A1"].font = tfont
+    mk_hdr(ws2, 3, ["Domain", "Role", "CMS", "Discovery", "Total", "Blogs", "Landing"], [25, 12, 18, 22, 10, 10, 12])
+    for si, site in enumerate(data.get("stage_1_sitemap", [])):
+        r = si + 4; s = site.get("url_summary", {})
+        for ci, v in enumerate([site.get("domain"), site.get("role"), site.get("cms_detected", "-"),
+                                site.get("discovery_method"), s.get("total", 0),
+                                s.get("blogs", 0), s.get("landing_pages", 0)], 1):
+            c = ws2.cell(row=r, column=ci, value=v); c.font = bfont; c.border = tb; c.alignment = wt
+
+    # Sheet 3: Architecture
+    ws3 = wb.create_sheet("Architecture"); ws3.sheet_properties.tabColor = "22C55E"
+    ws3.merge_cells("A1:F1"); ws3["A1"] = "SITE ARCHITECTURE"; ws3["A1"].font = tfont
+    mk_hdr(ws3, 3, ["Domain", "Posts/Mo", "Frequency", "Avg Title", "Avg Desc", "Missing Desc %"], [25, 12, 14, 12, 12, 14])
+    for si, prof in enumerate(data.get("stage_2_architecture", [])):
+        r = si + 4; cad = prof.get("publishing_cadence", {}); mq = prof.get("meta_quality", {})
+        for ci, v in enumerate([prof.get("domain"), cad.get("avg_per_month", 0), cad.get("frequency", "?"),
+                                mq.get("avg_title_len", 0), mq.get("avg_desc_len", 0),
+                                mq.get("pct_missing_desc", 0)], 1):
+            c = ws3.cell(row=r, column=ci, value=v); c.font = bfont; c.border = tb
+
+    # Sheet 4: Topics
+    ws4 = wb.create_sheet("Topic Landscape"); ws4.sheet_properties.tabColor = "F59E0B"
+    ws4.merge_cells("A1:E1"); ws4["A1"] = "TOPIC LANDSCAPE"; ws4["A1"].font = tfont
+    mk_hdr(ws4, 3, ["Domain", "Cluster", "Theme", "Volume", "Pages"], [20, 25, 35, 12, 8])
+    r4 = 3
+    for td in data.get("stage_3_topics", []):
+        for cl in td.get("topic_clusters", []):
+            r4 += 1
+            for ci, v in enumerate([td.get("domain"), cl.get("cluster_name"), cl.get("primary_theme"),
+                                    cl.get("estimated_volume"), len(cl.get("pages", []))], 1):
+                c = ws4.cell(row=r4, column=ci, value=v); c.font = bfont; c.border = tb; c.alignment = wt
+
+    # Sheet 5: Gaps
+    ws5 = wb.create_sheet("Content Gaps"); ws5.sheet_properties.tabColor = "EF4444"
+    ws5.merge_cells("A1:H1"); ws5["A1"] = "CONTENT GAP MATRIX"; ws5["A1"].font = tfont
+    mk_hdr(ws5, 3, ["Topic", "Keyword", "Intent", "Volume", "Gap", "Covered By", "Score", "Priority"],
+           [25, 22, 14, 10, 10, 25, 8, 10])
+    for gi, g in enumerate(gaps):
+        r = gi + 4
+        vals = [g.get("topic"), g.get("inferred_keyword"), g.get("search_intent"),
+                g.get("volume_tier"), g.get("gap_type"), ", ".join(g.get("covered_by", [])),
+                g.get("opportunity_score"), g.get("priority")]
+        for ci, v in enumerate(vals, 1):
+            c = ws5.cell(row=r, column=ci, value=v); c.font = bfont; c.border = tb; c.alignment = wt
+            if ci in (7, 8):
+                pf = pfill(v)
+                if pf: c.fill = pf
+
+    # Sheet 6: Recommendations
+    ws6 = wb.create_sheet("Recommendations"); ws6.sheet_properties.tabColor = PUR
+    ws6.merge_cells("A1:H1"); ws6["A1"] = "RECOMMENDATIONS"; ws6["A1"].font = tfont
+    mk_hdr(ws6, 3, ["#", "Title", "Type", "Keyword", "Intent", "Priority", "Effort", "Outline"],
+           [4, 30, 12, 20, 12, 8, 10, 40])
+    for ri, rec in enumerate(recs):
+        r = ri + 4
+        ol = " > ".join(rec.get("brief_outline", []))
+        for ci, v in enumerate([ri + 1, rec.get("suggested_title"), rec.get("content_type"),
+                                rec.get("target_keyword"), rec.get("search_intent"),
+                                rec.get("priority_score"), rec.get("estimated_effort"), ol], 1):
+            c = ws6.cell(row=r, column=ci, value=v); c.font = bfont; c.border = tb; c.alignment = wt
+
+    # Sheet 7: Calendar
+    ws7 = wb.create_sheet("Content Calendar"); ws7.sheet_properties.tabColor = "22C55E"
+    ws7.merge_cells("A1:H1"); ws7["A1"] = "CONTENT CALENDAR"; ws7["A1"].font = tfont
+    cal = data.get("stage_6_calendar", {}); cfg = cal.get("config", {})
+    ws7.merge_cells("A2:H2")
+    ws7["A2"] = f"Freq: {cfg.get('frequency','?')} | {cfg.get('horizon_months','?')} months | Start: {cfg.get('start_date','?')}"
+    ws7["A2"].font = mfont
+    mk_hdr(ws7, 4, ["Week", "Date", "Title", "Type", "Keyword", "Intent", "Priority", "Effort"],
+           [6, 12, 30, 12, 20, 12, 8, 10])
+    r7 = 4
+    for w in cal.get("calendar", []):
+        for e in w.get("entries", []):
+            r7 += 1
+            for ci, v in enumerate([w.get("week"), e.get("publish_date"), e.get("title"),
+                                    e.get("content_type"), e.get("target_keyword"),
+                                    e.get("search_intent"), e.get("priority_score"),
+                                    e.get("estimated_effort")], 1):
+                c = ws7.cell(row=r7, column=ci, value=v); c.font = bfont; c.border = tb; c.alignment = wt
+
+    for sheet in [ws, ws2, ws3, ws4, ws5, ws6, ws7]:
+        sheet.freeze_panes = "A5" if sheet in (ws, ws7) else "A4"
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="content_gap_report.xlsx"'},
+    )
+
+
+@app.post("/api/content-gap/download-pdf")
+async def download_gap_pdf(request: Request):
+    from fpdf import FPDF
+    import io
+
+    data = await request.json()
+    S = _sanitize_for_pdf
+    PUR = (109, 40, 217); PUR_L = (237, 233, 254)
+    DRK = (30, 30, 30); BDY = (55, 55, 55); MUT = (120, 120, 120)
+    WHT = (255, 255, 255); GRN = (34, 197, 94); ORG = (245, 158, 11)
+    RED = (239, 68, 68); BRD = (209, 213, 219); STR = (243, 244, 246)
+
+    class PDF(FPDF):
+        def header(self):
+            if self.page_no() == 1: return
+            self.set_font("Helvetica", "", 7); self.set_text_color(*MUT)
+            self.set_y(8); self.cell(0, 5, "Vizup Soul | Content Gap Analysis", align="R")
+            self.set_draw_color(*PUR); self.line(10, 14, 200, 14); self.set_y(17)
+        def footer(self):
+            self.set_y(-12); self.set_font("Helvetica", "", 7); self.set_text_color(*MUT)
+            self.cell(0, 5, f"Page {self.page_no()}/{{nb}}", align="C")
+
+    pdf = PDF("P", "mm", "A4"); pdf.alias_nb_pages()
+    pdf.set_auto_page_break(True, 16)
+    LM = pdf.l_margin; PW = pdf.w - pdf.l_margin - pdf.r_margin
+
+    def sec(title):
+        if pdf.get_y() > pdf.h - 35: pdf.add_page()
+        pdf.ln(3); pdf.set_fill_color(*PUR)
+        pdf.rect(LM, pdf.get_y(), PW, 9, "F")
+        pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(*WHT)
+        pdf.set_x(LM + 4); pdf.cell(PW - 8, 9, S(title), new_x="LMARGIN", new_y="NEXT"); pdf.ln(3)
+
+    # Cover
+    pdf.add_page(); pdf.set_fill_color(*PUR); pdf.rect(0, 0, 210, 48, "F")
+    pdf.set_y(10); pdf.set_font("Helvetica", "B", 22); pdf.set_text_color(*WHT)
+    pdf.cell(0, 12, "Content Gap Analysis", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10); pdf.set_text_color(220, 210, 255)
+    pdf.cell(0, 6, "Vizup Soul", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(0, 5, S(f"Generated: {data.get('generated_at','')} | Model: {data.get('model_used','')}"),
+             align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_y(55)
+
+    # Stage 1
+    sec("Stage 1: Sitemap Intelligence")
+    for site in data.get("stage_1_sitemap", []):
+        pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(*PUR)
+        pdf.cell(0, 5, S(f"{site.get('domain','?')} ({site.get('role','?')})"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 8); pdf.set_text_color(*BDY)
+        s = site.get("url_summary", {})
+        pdf.cell(0, 4, S(f"Discovery: {site.get('discovery_method','?')} | CMS: {site.get('cms_detected','-')}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 4, S(f"{s.get('total',0)} pages | {s.get('blogs',0)} blogs | {s.get('landing_pages',0)} landing"), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+    # Stage 2
+    sec("Stage 2: Architecture")
+    for prof in data.get("stage_2_architecture", []):
+        cad = prof.get("publishing_cadence", {}); mq = prof.get("meta_quality", {})
+        pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(*PUR)
+        pdf.cell(0, 5, S(prof.get("domain", "?")), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 8); pdf.set_text_color(*BDY)
+        pdf.cell(0, 4, S(f"{cad.get('avg_per_month',0)} posts/mo ({cad.get('frequency','?')}) | Titles avg {mq.get('avg_title_len',0)} chars"), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+    # Stage 4
+    gaps = data.get("stage_4_gaps", {}).get("gap_matrix", [])
+    if gaps:
+        sec("Stage 4: Content Gaps")
+        for i, g in enumerate(gaps):
+            if pdf.get_y() > pdf.h - 16: pdf.add_page()
+            pdf.set_font("Helvetica", "B", 8); pdf.set_text_color(*DRK)
+            pdf.cell(0, 5, S(f"{i+1}. {g.get('topic','?')} -- {g.get('inferred_keyword','?')}"), new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("Helvetica", "", 7); pdf.set_text_color(*BDY)
+            pdf.cell(0, 4, S(f"{g.get('search_intent','?')} | {g.get('volume_tier','?')} | {g.get('gap_type','?')} | Score: {g.get('opportunity_score','?')}/10"), new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1)
+
+    # Stage 5
+    recs = data.get("stage_5_recommendations", {}).get("recommendations", [])
+    if recs:
+        sec("Stage 5: Recommendations")
+        for i, r in enumerate(recs):
+            if pdf.get_y() > pdf.h - 20: pdf.add_page()
+            pdf.set_font("Helvetica", "B", 8); pdf.set_text_color(*PUR)
+            pdf.cell(0, 5, S(f"{i+1}. {r.get('suggested_title','?')}"), new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("Helvetica", "", 7); pdf.set_text_color(*BDY)
+            pdf.cell(0, 4, S(f"{r.get('content_type','?')} | {r.get('target_keyword','?')} | P{r.get('priority_score','?')}/10"), new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1)
+
+    # Stage 6
+    cal = data.get("stage_6_calendar", {})
+    if cal.get("calendar"):
+        sec("Stage 6: Content Calendar")
+        cfg = cal.get("config", {})
+        pdf.set_font("Helvetica", "", 8); pdf.set_text_color(*BDY)
+        pdf.cell(0, 5, S(f"{cfg.get('frequency','?')} | {cfg.get('horizon_months','?')} months | {cfg.get('total_pieces','?')} pieces"), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        for w in cal.get("calendar", []):
+            if pdf.get_y() > pdf.h - 18: pdf.add_page()
+            pdf.set_font("Helvetica", "B", 8); pdf.set_text_color(*DRK)
+            pdf.cell(0, 5, S(f"Week {w.get('week','?')} -- {w.get('week_start','?')}"), new_x="LMARGIN", new_y="NEXT")
+            for e in w.get("entries", []):
+                pdf.set_font("Helvetica", "", 7); pdf.set_text_color(*BDY); pdf.set_x(LM + 4)
+                pdf.cell(0, 4, S(f"[{e.get('publish_date','?')}] {e.get('title','?')} ({e.get('content_type','?')})"), new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1)
+
+    buf = io.BytesIO(); pdf.output(buf); buf.seek(0)
+    return Response(
+        content=buf.getvalue(), media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="content_gap_report.pdf"'},
     )
 
 

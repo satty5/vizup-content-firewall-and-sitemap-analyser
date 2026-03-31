@@ -104,9 +104,10 @@ async def _call_openai(
     user_prompt: str,
     model: str,
     temperature: float,
+    max_tokens: int = 16384,
 ) -> str:
     client = _get_openai()
-    response = await client.chat.completions.create(
+    kwargs: dict[str, Any] = dict(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -114,6 +115,9 @@ async def _call_openai(
         ],
         temperature=temperature,
     )
+    if max_tokens:
+        kwargs["max_completion_tokens"] = max_tokens
+    response = await client.chat.completions.create(**kwargs)
     return response.choices[0].message.content or ""
 
 
@@ -122,17 +126,19 @@ async def _call_anthropic(
     user_prompt: str,
     model: str,
     temperature: float,
+    max_tokens: int = 16384,
 ) -> str:
     client = _get_anthropic()
-    response = await client.messages.create(
+    async with client.messages.stream(
         model=model,
-        max_tokens=8192,
+        max_tokens=max_tokens,
         temperature=temperature,
         system=system_prompt,
         messages=[
             {"role": "user", "content": user_prompt},
         ],
-    )
+    ) as stream:
+        response = await stream.get_final_message()
     text_parts = [
         block.text for block in response.content if block.type == "text"
     ]
@@ -146,19 +152,21 @@ async def llm_review(
     temperature: float | None = None,
     response_format: dict[str, Any] | None = None,
     provider: str | None = None,
+    max_tokens: int = 16384,
 ) -> dict[str, Any]:
     """
     Run a single LLM review call through the active provider.
     Returns parsed JSON from the model.
+    max_tokens defaults to 16384; callers can raise for large outputs.
     """
     model = model or _active_model
     provider = provider or _MODEL_TO_PROVIDER.get(model, _active_provider)
     temperature = temperature if temperature is not None else REVIEW_TEMPERATURE
 
     if provider == "anthropic":
-        raw = await _call_anthropic(system_prompt, user_prompt, model, temperature)
+        raw = await _call_anthropic(system_prompt, user_prompt, model, temperature, max_tokens)
     else:
-        raw = await _call_openai(system_prompt, user_prompt, model, temperature)
+        raw = await _call_openai(system_prompt, user_prompt, model, temperature, max_tokens)
 
     content = _strip_code_fences(raw)
 

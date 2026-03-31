@@ -1147,6 +1147,12 @@ label {
   padding: 40px;
   color: var(--text-muted);
 }
+.compare-section-label { font-size: 11px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.compare-section-hint { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+.compare-main-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.compare-main-row .compare-url-input { flex: 1; }
+.compare-pos-select { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: var(--text); font-size: 11px; min-width: 90px; cursor: pointer; }
+.compare-pos-select:focus { border-color: var(--accent); outline: none; }
 .compare-your-content-note {
   font-size: 11px;
   color: var(--text-dim);
@@ -1324,6 +1330,85 @@ label {
 .provider-badge-openai { background: rgba(108,92,231,0.12); color: var(--accent); }
 .provider-badge-anthropic { background: rgba(108,92,231,0.12); color: var(--accent); }
 
+/* Content Gap Analyzer */
+.gap-inputs { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.gap-section { display: flex; flex-direction: column; gap: 6px; }
+.gap-section > label { font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+.gap-domain-row { display: flex; gap: 8px; }
+.gap-domain-row input { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 13px; }
+.gap-domain-row button { padding: 8px 16px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.gap-domain-row button:hover { border-color: var(--accent); }
+.gap-or-divider { align-items: center; }
+.gap-or-divider span { color: var(--text-muted); font-size: 11px; }
+.gap-section textarea { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 13px; font-family: var(--mono); resize: vertical; }
+.gap-comp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.gap-comp-num { color: var(--accent); font-weight: 600; font-size: 12px; min-width: 20px; }
+.gap-comp-input { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 13px; }
+.gap-comp-remove { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; padding: 0 4px; }
+.gap-comp-remove:hover { color: var(--red); }
+.gap-add-btn { width: 100%; padding: 6px; background: none; border: 1px dashed var(--border); border-radius: 6px; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+.gap-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+.gap-cal-settings { display: flex; flex-direction: column; gap: 6px; }
+.gap-cal-row { display: flex; gap: 8px; }
+.gap-cal-row select, .gap-cal-row input { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px; color: var(--text); font-size: 12px; }
+.gap-analyze-btn { width: 100%; padding: 12px; background: var(--accent); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 8px; }
+.gap-analyze-btn:hover { opacity: 0.9; }
+.gap-analyze-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.gap-progress { display: flex; gap: 4px; padding: 16px; flex-wrap: wrap; }
+.gap-step { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 500; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); }
+.gap-step.active { color: var(--accent); border-color: var(--accent); background: var(--accent-glow); }
+.gap-step.done { color: var(--green); border-color: rgba(46,213,115,0.3); background: var(--green-bg); }
+.gap-step-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; background: var(--surface2); border: 1px solid var(--border); }
+.gap-step.active .gap-step-icon { background: var(--accent); color: white; border-color: var(--accent); }
+.gap-step.done .gap-step-icon { background: var(--green); color: white; border-color: var(--green); }
+
+.gap-download-bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin: 16px 0; }
+.gap-download-bar span { font-size: 11px; color: var(--text-dim); font-weight: 600; margin-right: auto; }
+.gap-dl-btn { padding: 6px 14px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--text); }
+.gap-dl-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.gap-panel { margin-bottom: 12px; }
+.gap-panel-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px 8px 0 0; cursor: pointer; }
+.gap-panel-header h3 { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+.gap-panel-tag { font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+.gap-panel-body { padding: 14px; border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; background: var(--surface); }
+.gap-panel.collapsed .gap-panel-body { display: none; }
+.gap-panel.collapsed .gap-panel-header { border-radius: 8px; }
+
+.gap-site-card { display: flex; gap: 12px; padding: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; align-items: flex-start; flex-wrap: wrap; }
+.gap-site-card .domain { font-weight: 700; color: var(--accent); font-size: 13px; min-width: 140px; }
+.gap-stat { text-align: center; min-width: 60px; }
+.gap-stat-num { font-size: 16px; font-weight: 700; color: var(--text); }
+.gap-stat-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; }
+
+.gap-chip { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500; margin: 2px 4px 2px 0; }
+.gap-chip-high { background: var(--red-bg); color: var(--red); border: 1px solid rgba(255,71,87,0.2); }
+.gap-chip-medium { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(255,165,2,0.2); }
+.gap-chip-low { background: var(--green-bg); color: var(--green); border: 1px solid rgba(46,213,115,0.2); }
+.gap-chip-info { background: rgba(112,161,255,0.08); color: var(--blue); border: 1px solid rgba(112,161,255,0.2); }
+
+.gap-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.gap-table th { text-align: left; padding: 8px 10px; background: var(--surface2); border-bottom: 2px solid var(--accent); color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.gap-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
+.gap-table tr:hover td { background: var(--accent-glow); }
+
+.gap-rec-card { padding: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+.gap-rec-title { font-weight: 700; color: var(--text); font-size: 13px; margin-bottom: 6px; }
+.gap-rec-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.gap-rec-outline { font-size: 11px; color: var(--text-dim); line-height: 1.6; }
+.gap-rec-outline li { margin-bottom: 2px; }
+
+.gap-cal-week { margin-bottom: 12px; }
+.gap-cal-week-header { font-size: 12px; font-weight: 700; color: var(--accent); padding: 6px 0; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.gap-cal-entry { display: flex; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; background: var(--surface2); font-size: 12px; }
+.gap-cal-entry.pillar { border-left: 3px solid var(--accent); background: var(--accent-glow); }
+.gap-cal-date { color: var(--text-dim); font-family: var(--mono); font-size: 11px; min-width: 80px; }
+.gap-cal-title { flex: 1; color: var(--text); font-weight: 500; }
+.gap-milestone { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--accent-glow); border: 1px solid rgba(108,92,231,0.3); border-radius: 6px; margin: 8px 0; font-size: 11px; color: var(--accent); font-weight: 600; }
+
+.gap-discover-preview { padding: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; font-size: 12px; }
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; height: auto; }
   .panel-left { border-right: none; border-bottom: 1px solid var(--border); }
@@ -1445,6 +1530,7 @@ label {
       <div class="tab" data-tab="summaries" onclick="switchTab(this)">Summaries</div>
       <div class="tab" data-tab="repairs" onclick="switchTab(this)">Repairs</div>
       <div class="tab" data-tab="compare" onclick="switchTab(this)">Compare</div>
+      <div class="tab" data-tab="content-gap" onclick="switchTab(this)">Content Gap</div>
     </div>
 
     <div class="panel-body" id="results-body">
@@ -1476,25 +1562,116 @@ label {
 
         <div id="tab-compare" class="tab-content">
           <div class="compare-inputs">
-            <div class="compare-your-content-note">Your content (optional) is taken from the Content Input panel on the left. Without it, competitors are compared head-to-head.</div>
+            <div class="compare-section-label">Your Page (to analyze)</div>
+            <div class="compare-main-row">
+              <input type="text" id="compare-main-url" class="compare-url-input" placeholder="https://yoursite.com/page-to-analyze">
+              <select id="compare-main-pos" class="compare-pos-select" title="Current ranking position">
+                <option value="">Position...</option>
+                <option value="top3">Top 3</option>
+                <option value="top10">Page 1 (4-10)</option>
+                <option value="page2">Page 2 (11-20)</option>
+                <option value="page3_5">Page 3-5 (21-50)</option>
+                <option value="page5plus">Page 5+ (50+)</option>
+                <option value="not_ranking">Not ranking</option>
+              </select>
+            </div>
+            <div class="compare-section-label" style="margin-top:12px;">Competitors (currently ranking)</div>
+            <div class="compare-section-hint">Pages ranking for the same query. Position helps the analysis learn what Google prefers.</div>
             <div id="compare-urls-container">
               <div class="compare-url-row" data-idx="1">
-                <span class="compare-url-label">Competitor 1</span>
-                <input type="text" class="compare-url-input" placeholder="https://competitor-1-ranking-article.com/...">
+                <span class="compare-url-label">1</span>
+                <input type="text" class="compare-url-input" placeholder="https://competitor-ranking-page.com/...">
+                <select class="compare-pos-select" title="Ranking position">
+                  <option value="">Pos...</option>
+                  <option value="top3">Top 3</option>
+                  <option value="top10">Page 1</option>
+                  <option value="page2">Page 2</option>
+                  <option value="page3_5">P3-5</option>
+                  <option value="page5plus">P5+</option>
+                  <option value="unknown">Unknown</option>
+                </select>
                 <button class="compare-url-remove" onclick="removeCompetitorRow(this)" title="Remove">&times;</button>
               </div>
               <div class="compare-url-row" data-idx="2">
-                <span class="compare-url-label">Competitor 2</span>
-                <input type="text" class="compare-url-input" placeholder="https://competitor-2-ranking-article.com/...">
+                <span class="compare-url-label">2</span>
+                <input type="text" class="compare-url-input" placeholder="https://another-ranking-page.com/...">
+                <select class="compare-pos-select" title="Ranking position">
+                  <option value="">Pos...</option>
+                  <option value="top3">Top 3</option>
+                  <option value="top10">Page 1</option>
+                  <option value="page2">Page 2</option>
+                  <option value="page3_5">P3-5</option>
+                  <option value="page5plus">P5+</option>
+                  <option value="unknown">Unknown</option>
+                </select>
                 <button class="compare-url-remove" onclick="removeCompetitorRow(this)" title="Remove">&times;</button>
               </div>
             </div>
             <button class="compare-add-url-btn" id="compare-add-url-btn" onclick="addCompetitorRow()">+ Add Competitor</button>
             <button class="compare-run-btn" id="compare-run-btn" onclick="runComparison()">
-              Run Deep Comparison
+              Analyze Against Rankings
             </button>
           </div>
           <div class="compare-results" id="compare-results"></div>
+        </div>
+
+        <div id="tab-content-gap" class="tab-content">
+          <div class="gap-inputs" id="gap-inputs">
+            <div class="gap-section">
+              <label>Your Domain (optional)</label>
+              <div class="gap-domain-row">
+                <input type="text" id="gap-your-domain" placeholder="yourdomain.com">
+                <button onclick="discoverSitemap()" id="gap-discover-btn">Discover Sitemap</button>
+              </div>
+              <div id="gap-discover-preview" class="gap-discover-preview" style="display:none;"></div>
+            </div>
+            <div class="gap-section gap-or-divider"><span>-- OR --</span></div>
+            <div class="gap-section">
+              <label>Paste Your URLs (one per line)</label>
+              <textarea id="gap-your-urls" rows="3" placeholder="https://yourdomain.com/blog/post-1&#10;https://yourdomain.com/services/..."></textarea>
+            </div>
+            <div class="gap-section">
+              <label>Competitor Domains</label>
+              <div id="gap-comp-container">
+                <div class="gap-comp-row" data-idx="1">
+                  <span class="gap-comp-num">1.</span>
+                  <input type="text" class="gap-comp-input" placeholder="competitor1.com">
+                  <button class="gap-comp-remove" onclick="removeGapComp(this)">&times;</button>
+                </div>
+              </div>
+              <button class="gap-add-btn" onclick="addGapComp()">+ Add Competitor</button>
+            </div>
+            <div class="gap-section gap-cal-settings">
+              <label>Calendar Settings</label>
+              <div class="gap-cal-row">
+                <select id="gap-frequency">
+                  <option value="daily">Daily (5-7/wk)</option>
+                  <option value="3x_week">3x per week</option>
+                  <option value="2x_week">2x per week</option>
+                  <option value="weekly" selected>Weekly</option>
+                  <option value="biweekly">Bi-weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+                <select id="gap-horizon">
+                  <option value="1">1 month</option>
+                  <option value="3" selected>3 months</option>
+                  <option value="6">6 months</option>
+                  <option value="12">12 months</option>
+                </select>
+                <input type="date" id="gap-start-date">
+              </div>
+            </div>
+            <button class="gap-analyze-btn" onclick="runGapAnalysis()" id="gap-analyze-btn">Analyze Content Gaps</button>
+          </div>
+          <div id="gap-progress" class="gap-progress" style="display:none;">
+            <div class="gap-step" data-step="1"><span class="gap-step-icon">1</span> Discovering Sitemaps</div>
+            <div class="gap-step" data-step="2"><span class="gap-step-icon">2</span> Architecture</div>
+            <div class="gap-step" data-step="3"><span class="gap-step-icon">3</span> Topics & Keywords</div>
+            <div class="gap-step" data-step="4"><span class="gap-step-icon">4</span> Gap Matrix</div>
+            <div class="gap-step" data-step="5"><span class="gap-step-icon">5</span> Recommendations</div>
+            <div class="gap-step" data-step="6"><span class="gap-step-icon">6</span> Content Calendar</div>
+          </div>
+          <div id="gap-results" style="display:none;"></div>
         </div>
       </div>
     </div>
@@ -1686,7 +1863,7 @@ function switchTab(el) {
   el.classList.add('active');
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
-  if (tab === 'compare') {
+  if (tab === 'compare' || tab === 'content-gap') {
     document.getElementById('results-content').style.display = 'block';
     document.getElementById('empty-state').style.display = 'none';
     document.getElementById('verdict-bar').style.display = 'none';
@@ -2314,8 +2491,13 @@ function addCompetitorRow() {
   row.className = 'compare-url-row';
   row.dataset.idx = idx;
   row.innerHTML = `
-    <span class="compare-url-label">Competitor ${idx}</span>
-    <input type="text" class="compare-url-input" placeholder="https://competitor-${idx}-ranking-article.com/...">
+    <span class="compare-url-label">${idx}</span>
+    <input type="text" class="compare-url-input" placeholder="https://competitor-page.com/...">
+    <select class="compare-pos-select" title="Ranking position">
+      <option value="">Pos...</option><option value="top3">Top 3</option><option value="top10">Page 1</option>
+      <option value="page2">Page 2</option><option value="page3_5">P3-5</option>
+      <option value="page5plus">P5+</option><option value="unknown">Unknown</option>
+    </select>
     <button class="compare-url-remove" onclick="removeCompetitorRow(this)" title="Remove">&times;</button>
   `;
   container.appendChild(row);
@@ -2333,36 +2515,44 @@ function renumberCompetitorRows() {
   const rows = document.querySelectorAll('#compare-urls-container .compare-url-row');
   rows.forEach((row, i) => {
     row.dataset.idx = i + 1;
-    row.querySelector('.compare-url-label').textContent = 'Competitor ' + (i + 1);
+    row.querySelector('.compare-url-label').textContent = (i + 1);
   });
 }
 
-function getCompetitorUrls() {
-  const inputs = document.querySelectorAll('#compare-urls-container .compare-url-input');
-  return Array.from(inputs).map(el => el.value.trim()).filter(Boolean);
+function _collectCompareData() {
+  const mainUrl = (document.getElementById('compare-main-url') || {}).value || '';
+  const mainPos = (document.getElementById('compare-main-pos') || {}).value || '';
+  const rows = document.querySelectorAll('#compare-urls-container .compare-url-row');
+  const competitors = [];
+  rows.forEach(row => {
+    const url = (row.querySelector('.compare-url-input') || {}).value || '';
+    const pos = (row.querySelector('.compare-pos-select') || {}).value || '';
+    if (url.trim()) competitors.push({ url: url.trim(), position: pos });
+  });
+  return { mainUrl: mainUrl.trim(), mainPos, competitors };
 }
 
 async function runComparison() {
-  const content = document.getElementById('content-input').value.trim();
-  const urls = getCompetitorUrls();
+  const { mainUrl, mainPos, competitors } = _collectCompareData();
+  if (!competitors.length) return alert('Enter at least one competitor URL.');
+  if (!mainUrl && competitors.length < 2) return alert('Without a main URL, enter at least 2 competitor URLs.');
 
-  if (urls.length === 0) return alert('Enter at least one competitor URL.');
-  if (!content && urls.length < 2) return alert('Without your own content, enter at least 2 competitor URLs for a head-to-head comparison.');
-
-  const isCompOnly = !content;
   const btn = document.getElementById('compare-run-btn');
   const results = document.getElementById('compare-results');
 
   btn.disabled = true;
-  btn.textContent = 'Fetching & comparing...';
+  btn.textContent = 'Analyzing against rankings...';
   results.classList.add('active');
-  const modeLabel = isCompOnly ? 'competitor head-to-head analysis' : 'deep comparison';
-  results.innerHTML = '<div class="compare-loading"><div class="spinner" style="margin:0 auto 12px;"></div>Fetching ' + urls.length + ' competitor article' + (urls.length > 1 ? 's' : '') + ' and running ' + modeLabel + ' via ' + (getModelInfo(currentModel).name) + '...<br><span style="font-size:11px;opacity:0.6;">This may take 30–90 seconds depending on number of articles.</span></div>';
+  results.innerHTML = '<div class="compare-loading"><div class="spinner" style="margin:0 auto 12px;"></div>Fetching ' + (mainUrl ? 1 + competitors.length : competitors.length) + ' pages and analyzing what Google prefers via ' + (getModelInfo(currentModel).name) + '...<br><span style="font-size:11px;opacity:0.6;">This may take 1–3 minutes.</span></div>';
 
   try {
     const form = new FormData();
-    form.append('your_content', content);
-    form.append('competitor_urls', JSON.stringify(urls));
+    if (mainUrl) {
+      form.append('main_url', mainUrl);
+      form.append('main_position', mainPos);
+    }
+    form.append('competitor_urls', JSON.stringify(competitors.map(c => c.url)));
+    form.append('competitor_positions', JSON.stringify(competitors.map(c => c.position)));
     form.append('model', currentModel);
 
     const res = await fetch('/api/content-compare', { method: 'POST', body: form });
@@ -2371,13 +2561,13 @@ async function runComparison() {
       throw new Error(err.detail || 'Comparison failed');
     }
     const data = await res.json();
-    data._comp_only = isCompOnly;
+    data._comp_only = !mainUrl;
     renderComparison(data);
   } catch (err) {
     results.innerHTML = `<div style="color:var(--red);padding:20px;text-align:center;">Comparison failed: ${escHtml(err.message)}</div>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Run Deep Comparison';
+    btn.textContent = 'Analyze Against Rankings';
   }
 }
 
@@ -2600,6 +2790,422 @@ function escHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+// ───────── Content Gap Analyzer ─────────
+
+window._lastGapData = null;
+
+function addGapComp() {
+  const container = document.getElementById('gap-comp-container');
+  const rows = container.querySelectorAll('.gap-comp-row');
+  const idx = rows.length + 1;
+  const row = document.createElement('div');
+  row.className = 'gap-comp-row';
+  row.dataset.idx = idx;
+  row.innerHTML = `<span class="gap-comp-num">${idx}.</span><input type="text" class="gap-comp-input" placeholder="competitor${idx}.com"><button class="gap-comp-remove" onclick="removeGapComp(this)">&times;</button>`;
+  container.appendChild(row);
+}
+
+function removeGapComp(btn) {
+  const container = document.getElementById('gap-comp-container');
+  if (container.querySelectorAll('.gap-comp-row').length <= 1) return;
+  btn.closest('.gap-comp-row').remove();
+  container.querySelectorAll('.gap-comp-row').forEach((r, i) => {
+    r.dataset.idx = i + 1;
+    r.querySelector('.gap-comp-num').textContent = (i + 1) + '.';
+  });
+}
+
+async function discoverSitemap() {
+  const domain = document.getElementById('gap-your-domain').value.trim();
+  if (!domain) return alert('Enter a domain first.');
+  const btn = document.getElementById('gap-discover-btn');
+  const preview = document.getElementById('gap-discover-preview');
+  btn.disabled = true; btn.textContent = 'Discovering...';
+  preview.style.display = 'none';
+  try {
+    const fd = new FormData();
+    fd.append('domain', domain);
+    const res = await fetch('/api/content-gap/discover', { method: 'POST', body: fd });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Failed'); }
+    const data = await res.json();
+    const s1 = data.stage_1_sitemap;
+    const s = s1.url_summary || {};
+    let html = `<strong>${escHtml(s1.domain)}</strong>`;
+    if (s1.cms_detected) html += ` <span class="gap-chip gap-chip-info">${escHtml(s1.cms_detected)}</span>`;
+    html += `<br>Discovery: ${escHtml(s1.discovery_method)}`;
+    html += `<br>Pages: <strong>${s.total || 0}</strong> total | ${s.blogs || 0} blogs | ${s.landing_pages || 0} landing`;
+    const f = s1.freshness || {};
+    if (f.newest_lastmod) html += `<br>Latest: ${f.newest_lastmod} | ${f.pct_with_lastmod || 0}% dated`;
+    if (s1.errors && s1.errors.length) html += `<br><span style="color:var(--red)">${escHtml(s1.errors.join(', '))}</span>`;
+    preview.innerHTML = html;
+    preview.style.display = 'block';
+  } catch (err) {
+    preview.innerHTML = `<span style="color:var(--red)">${escHtml(err.message)}</span>`;
+    preview.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Discover Sitemap';
+  }
+}
+
+function _setGapStep(n) {
+  document.querySelectorAll('.gap-step').forEach(el => {
+    const s = parseInt(el.dataset.step);
+    el.classList.remove('active', 'done');
+    if (s < n) el.classList.add('done');
+    else if (s === n) el.classList.add('active');
+  });
+}
+
+async function runGapAnalysis() {
+  const compInputs = document.querySelectorAll('#gap-comp-container .gap-comp-input');
+  const compDomains = [];
+  compInputs.forEach(inp => { if (inp.value.trim()) compDomains.push(inp.value.trim()); });
+  if (!compDomains.length) return alert('Add at least one competitor domain.');
+
+  const yourDomain = document.getElementById('gap-your-domain').value.trim();
+  const yourUrls = document.getElementById('gap-your-urls').value.trim().split('\n').filter(u => u.trim());
+  const freq = document.getElementById('gap-frequency').value;
+  const horizon = document.getElementById('gap-horizon').value;
+  const startDate = document.getElementById('gap-start-date').value;
+
+  const btn = document.getElementById('gap-analyze-btn');
+  btn.disabled = true; btn.textContent = 'Analyzing...';
+  document.getElementById('gap-progress').style.display = 'flex';
+
+  const resultsEl = document.getElementById('gap-results');
+  resultsEl.style.display = 'block';
+  resultsEl.innerHTML = `<div class="gap-download-bar" id="gap-dl-bar" style="opacity:0.4;pointer-events:none;">
+    <span>Export Report</span>
+    <button class="gap-dl-btn" onclick="copyGapText()">Copy Text</button>
+    <button class="gap-dl-btn" onclick="downloadGapExcel()">Excel</button>
+    <button class="gap-dl-btn" onclick="downloadGapPdf()">PDF</button>
+  </div>
+  <div id="gap-stages-container"></div>`;
+
+  window._lastGapData = {};
+  _setGapStep(1);
+
+  const fd = new FormData();
+  if (yourDomain) fd.append('your_domain', yourDomain);
+  fd.append('your_urls', JSON.stringify(yourUrls));
+  fd.append('competitor_domains', JSON.stringify(compDomains));
+  fd.append('model', currentModel);
+  fd.append('publishing_frequency', freq);
+  fd.append('calendar_horizon', horizon);
+  if (startDate) fd.append('calendar_start_date', startDate);
+
+  try {
+    const res = await fetch('/api/content-gap/analyze', { method: 'POST', body: fd });
+    if (!res.ok) {
+      const text = await res.text();
+      try { throw new Error(JSON.parse(text).detail); } catch { throw new Error(text || 'Analysis failed'); }
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        let evtName = '', evtData = '';
+        for (const line of part.split('\n')) {
+          if (line.startsWith('event: ')) evtName = line.slice(7).trim();
+          else if (line.startsWith('data: ')) evtData = line.slice(6);
+        }
+        if (evtName && evtData) {
+          try {
+            _handleGapSSE(evtName, JSON.parse(evtData));
+          } catch (e) { console.error('SSE parse error:', e, evtData.slice(0, 200)); }
+        }
+      }
+    }
+  } catch (err) {
+    const stagesEl = document.getElementById('gap-stages-container');
+    if (stagesEl) stagesEl.innerHTML += `<div style="color:var(--red);padding:16px;">Error: ${escHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Analyze Content Gaps';
+  }
+}
+
+function _handleGapSSE(event, data) {
+  const container = document.getElementById('gap-stages-container');
+  if (!container) return;
+
+  if (event === 'stage_1') {
+    _setGapStep(2);
+    window._lastGapData.stage_1_sitemap = data.stage_1_sitemap;
+    container.innerHTML += _renderGapStage1(data.stage_1_sitemap);
+  } else if (event === 'stage_2') {
+    _setGapStep(3);
+    window._lastGapData.stage_2_architecture = data.stage_2_architecture;
+    container.innerHTML += _renderGapStage2(data.stage_2_architecture);
+  } else if (event === 'stage_3') {
+    _setGapStep(4);
+    window._lastGapData.stage_3_topics = data.stage_3_topics;
+    container.innerHTML += _renderGapStage3(data.stage_3_topics);
+  } else if (event === 'stage_4_5') {
+    _setGapStep(5);
+    window._lastGapData.stage_4_gaps = data.stage_4_gaps;
+    window._lastGapData.stage_5_recommendations = data.stage_5_recommendations;
+    container.innerHTML += _renderGapStage4(data.stage_4_gaps);
+    container.innerHTML += _renderGapStage5(data.stage_5_recommendations);
+  } else if (event === 'stage_6') {
+    _setGapStep(6);
+    window._lastGapData.stage_6_calendar = data.stage_6_calendar;
+    container.innerHTML += _renderGapStage6(data.stage_6_calendar);
+  } else if (event === 'complete') {
+    _setGapStep(7);
+    window._lastGapData.model_used = data.model_used;
+    window._lastGapData.generated_at = data.generated_at;
+    window._lastGapData.report_id = data.report_id;
+    const dlBar = document.getElementById('gap-dl-bar');
+    if (dlBar) { dlBar.style.opacity = '1'; dlBar.style.pointerEvents = 'auto'; }
+  }
+}
+
+function _volChip(v) {
+  const vl = (v || '').toLowerCase();
+  if (vl === 'high') return '<span class="gap-chip gap-chip-high">High</span>';
+  if (vl === 'medium') return '<span class="gap-chip gap-chip-medium">Medium</span>';
+  return '<span class="gap-chip gap-chip-low">Low</span>';
+}
+function _prioChip(p) {
+  const pl = (typeof p === 'string') ? p.toLowerCase() : (p >= 7 ? 'high' : p >= 4 ? 'medium' : 'low');
+  if (pl === 'high') return '<span class="gap-chip gap-chip-high">High</span>';
+  if (pl === 'medium') return '<span class="gap-chip gap-chip-medium">Medium</span>';
+  return '<span class="gap-chip gap-chip-low">Low</span>';
+}
+function _intentChip(i) { return `<span class="gap-chip gap-chip-info">${escHtml(i || '?')}</span>`; }
+function _typeChip(t) {
+  const label = (t || '').replace(/_/g, ' ');
+  return `<span class="gap-chip gap-chip-info">${escHtml(label)}</span>`;
+}
+
+function _gapPanel(id, title, tag, body, open) {
+  return `<div class="gap-panel ${open ? '' : 'collapsed'}" id="${id}">
+    <div class="gap-panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
+      <h3>${title}</h3>${tag ? `<span class="gap-panel-tag" style="background:var(--accent-glow);color:var(--accent);">${tag}</span>` : ''}
+      <span style="color:var(--text-muted);font-size:14px;">&#9662;</span>
+    </div>
+    <div class="gap-panel-body">${body}</div>
+  </div>`;
+}
+
+function _renderGapStage1(sites) {
+  let h = '';
+  for (const site of (sites || [])) {
+    const s = site.url_summary || {};
+    const f = site.freshness || {};
+    h += `<div class="gap-site-card">
+      <div class="domain">${escHtml(site.domain)} <span style="color:var(--text-muted);font-size:11px">(${escHtml(site.role)})</span></div>
+      ${site.cms_detected ? `<span class="gap-chip gap-chip-info">${escHtml(site.cms_detected)}</span>` : ''}
+      <span style="font-size:11px;color:var(--text-dim)">via ${escHtml(site.discovery_method)}</span>
+      <div style="display:flex;gap:16px;width:100%;margin-top:4px;">
+        <div class="gap-stat"><div class="gap-stat-num">${s.total||0}</div><div class="gap-stat-label">Total</div></div>
+        <div class="gap-stat"><div class="gap-stat-num">${s.blogs||0}</div><div class="gap-stat-label">Blogs</div></div>
+        <div class="gap-stat"><div class="gap-stat-num">${s.landing_pages||0}</div><div class="gap-stat-label">Landing</div></div>
+        <div class="gap-stat"><div class="gap-stat-num">${s.other||0}</div><div class="gap-stat-label">Other</div></div>
+      </div>
+      ${f.newest_lastmod ? `<div style="font-size:11px;color:var(--text-dim);width:100%">Latest: ${f.newest_lastmod} | ${f.pct_with_lastmod||0}% dated | Last 90d: ${f.last_90d||0}</div>` : ''}
+    </div>`;
+  }
+  return _gapPanel('gp1', 'Stage 1: Sitemap Intelligence', `${(sites||[]).length} domains`, h, true);
+}
+
+function _renderGapStage2(profiles) {
+  let h = '';
+  for (const prof of (profiles || [])) {
+    const cad = prof.publishing_cadence || {};
+    const mq = prof.meta_quality || {};
+    h += `<div class="gap-site-card">
+      <div class="domain">${escHtml(prof.domain)}</div>
+      <div style="display:flex;gap:16px;width:100%;margin-top:4px;">
+        <div class="gap-stat"><div class="gap-stat-num">${cad.avg_per_month||0}</div><div class="gap-stat-label">Posts/Mo</div></div>
+        <div class="gap-stat"><div class="gap-stat-num">${escHtml(cad.frequency||'?')}</div><div class="gap-stat-label">Cadence</div></div>
+        <div class="gap-stat"><div class="gap-stat-num">${mq.avg_title_len||0}</div><div class="gap-stat-label">Avg Title</div></div>
+        <div class="gap-stat"><div class="gap-stat-num">${mq.pct_missing_desc||0}%</div><div class="gap-stat-label">No Desc</div></div>
+      </div>`;
+    if (prof.recent_content && prof.recent_content.length) {
+      h += `<div style="width:100%;margin-top:6px;"><div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;font-weight:600;">RECENT CONTENT (Last 90 days)</div>`;
+      for (const rc of prof.recent_content.slice(0, 5))
+        h += `<div style="font-size:11px;color:var(--text-dim);padding:2px 0;">[${escHtml(rc.published_date||'?')}] ${escHtml(rc.title||'?')}</div>`;
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  return _gapPanel('gp2', 'Stage 2: Site Architecture', `${(profiles||[]).length} profiles`, h, true);
+}
+
+function _renderGapStage3(topicsArr) {
+  let h = '';
+  let totalClusters = 0;
+  for (const td of (topicsArr || [])) {
+    h += `<div style="margin-bottom:12px;"><strong style="color:var(--accent)">${escHtml(td.domain)}</strong> <span style="color:var(--text-muted);font-size:11px">(${escHtml(td.role)})</span><div style="margin-top:6px;">`;
+    for (const cl of (td.topic_clusters || [])) {
+      totalClusters++;
+      h += `<div style="margin-bottom:6px;padding:6px 10px;background:var(--surface2);border-radius:6px;border:1px solid var(--border);">
+        <span style="font-weight:600;font-size:12px;">${escHtml(cl.cluster_name||'?')}</span>
+        ${_volChip(cl.estimated_volume)}
+        <span style="color:var(--text-muted);font-size:11px;margin-left:4px;">${(cl.pages||[]).length} pages</span>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">${escHtml(cl.primary_theme||'')}</div>
+      </div>`;
+    }
+    h += '</div></div>';
+  }
+  return _gapPanel('gp3', 'Stage 3: Topic & Keyword Landscape', `${totalClusters} clusters`, h, true);
+}
+
+function _renderGapStage4(gapData) {
+  const gaps = (gapData || {}).gap_matrix || [];
+  let h = '';
+  if (gaps.length) {
+    h += `<table class="gap-table"><thead><tr>
+      <th>Topic / Keyword</th><th>Intent</th><th>Volume</th><th>Gap</th><th>Score</th><th>Priority</th><th>Covered By</th>
+    </tr></thead><tbody>`;
+    for (const g of gaps) {
+      h += `<tr>
+        <td><strong>${escHtml(g.topic||'')}</strong><br><span style="color:var(--text-dim);font-size:11px;">${escHtml(g.inferred_keyword||'')}</span></td>
+        <td>${_intentChip(g.search_intent)}</td><td>${_volChip(g.volume_tier)}</td>
+        <td>${_typeChip(g.gap_type)}</td>
+        <td><strong style="color:var(--accent)">${g.opportunity_score||'?'}</strong>/10</td>
+        <td>${_prioChip(g.priority)}</td>
+        <td style="font-size:11px;color:var(--text-dim)">${(g.covered_by||[]).map(d=>escHtml(d)).join(', ')}</td>
+      </tr>`;
+    }
+    h += '</tbody></table>';
+  } else {
+    h = '<div style="color:var(--text-muted);padding:20px;text-align:center;">No gaps identified.</div>';
+  }
+  return _gapPanel('gp4', 'Stage 4: Content Gap Matrix', `${gaps.length} gaps`, h, true);
+}
+
+function _renderGapStage5(recsData) {
+  const recs = (recsData || {}).recommendations || [];
+  const qw = (recsData || {}).quick_wins || [];
+  const sm = (recsData || {}).strategic_moves || [];
+  let h = '';
+  if (qw.length) {
+    h += '<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:6px;">QUICK WINS</div>';
+    for (const q of qw)
+      h += `<div style="padding:6px 10px;background:var(--green-bg);border-radius:6px;margin-bottom:4px;font-size:12px;">
+        <strong>${escHtml(q.action||'')}</strong> &rarr; ${escHtml(q.target||'')}
+        <span style="float:right">${_prioChip(q.expected_impact)} effort: ${escHtml(q.effort||'?')}</span></div>`;
+    h += '</div>';
+  }
+  for (const r of recs) {
+    h += `<div class="gap-rec-card">
+      <div class="gap-rec-title">${escHtml(r.suggested_title||'?')}</div>
+      <div class="gap-rec-meta">
+        ${_typeChip(r.content_type)} ${_intentChip(r.search_intent)} ${_volChip(r.estimated_effort)}
+        <span class="gap-chip" style="background:var(--accent-glow);color:var(--accent);border:1px solid rgba(108,92,231,0.3);">P${r.priority_score||'?'}/10</span>
+      </div>
+      <div style="font-size:12px;color:var(--text);margin-bottom:4px;"><strong>Keyword:</strong> ${escHtml(r.target_keyword||'?')}</div>
+      ${r.brief_outline&&r.brief_outline.length ? `<div class="gap-rec-outline"><strong>Outline:</strong><ol>${r.brief_outline.map(o=>`<li>${escHtml(o)}</li>`).join('')}</ol></div>` : ''}
+      ${r.rationale ? `<div style="font-size:11px;color:var(--text-dim);margin-top:4px;"><em>${escHtml(r.rationale)}</em></div>` : ''}
+    </div>`;
+  }
+  if (sm.length) {
+    h += '<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:6px;">STRATEGIC MOVES</div>';
+    for (const s of sm)
+      h += `<div style="padding:8px 12px;background:var(--accent-glow);border:1px solid rgba(108,92,231,0.3);border-radius:6px;margin-bottom:6px;font-size:12px;">
+        <strong>${escHtml(s.action||'')}</strong><br><span style="color:var(--text-dim)">${escHtml(s.rationale||'')}</span></div>`;
+    h += '</div>';
+  }
+  return _gapPanel('gp5', 'Stage 5: Action Plan', `${recs.length} topics`, h, true);
+}
+
+function _renderGapStage6(cal) {
+  cal = cal || {};
+  const weeks = cal.calendar || [];
+  const cfg = cal.config || {};
+  const themes = cal.monthly_themes || [];
+  const milestones = cal.milestones || [];
+  const summary = cal.summary || {};
+  let h = '';
+  if (cfg.frequency) {
+    h += `<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
+      <div class="gap-stat"><div class="gap-stat-num">${cfg.total_pieces||'?'}</div><div class="gap-stat-label">Total Pieces</div></div>
+      <div class="gap-stat"><div class="gap-stat-num">${escHtml(cfg.frequency)}</div><div class="gap-stat-label">Frequency</div></div>
+      <div class="gap-stat"><div class="gap-stat-num">${cfg.horizon_months||'?'}</div><div class="gap-stat-label">Months</div></div>
+      <div class="gap-stat"><div class="gap-stat-num">${summary.pillar_pages||0}</div><div class="gap-stat-label">Pillars</div></div>
+    </div>`;
+  }
+  if (themes.length) {
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+    for (const t of themes)
+      h += `<div style="padding:6px 12px;background:var(--accent-glow);border:1px solid rgba(108,92,231,0.2);border-radius:6px;font-size:11px;">
+        <strong style="color:var(--accent)">${escHtml(t.month||'')}</strong>: ${escHtml(t.theme||'')} <span style="color:var(--text-muted)">(${t.pieces||0})</span></div>`;
+    h += '</div>';
+  }
+  const msMap = {};
+  for (const m of milestones) msMap[m.week] = m.label;
+  for (const w of weeks) {
+    h += `<div class="gap-cal-week"><div class="gap-cal-week-header">Week ${w.week||'?'} &mdash; ${escHtml(w.week_start||'?')}</div>`;
+    for (const e of (w.entries||[])) {
+      const pil = e.is_pillar ? ' pillar' : '';
+      h += `<div class="gap-cal-entry${pil}">
+        <span class="gap-cal-date">${escHtml(e.publish_date||'?')}</span>
+        <span class="gap-cal-title">${e.is_pillar?'&#9733; ':''}${escHtml(e.title||'?')}</span>
+        ${_typeChip(e.content_type)} ${_intentChip(e.search_intent)}
+        <span class="gap-chip" style="background:var(--accent-glow);color:var(--accent);border:1px solid rgba(108,92,231,0.3);">P${e.priority_score||'?'}</span>
+      </div>`;
+    }
+    h += '</div>';
+    if (msMap[w.week]) h += `<div class="gap-milestone">&#127942; ${escHtml(msMap[w.week])}</div>`;
+  }
+  return _gapPanel('gp6', 'Stage 6: Content Calendar', `${cfg.total_pieces||weeks.length} pieces`, h, true);
+}
+
+async function copyGapText() {
+  if (!window._lastGapData) return alert('No data to copy.');
+  try {
+    const res = await fetch('/api/content-gap/download-text', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(window._lastGapData),
+    });
+    const text = await res.text();
+    await navigator.clipboard.writeText(text);
+    alert('Report copied to clipboard!');
+  } catch (err) { alert('Copy failed: ' + err.message); }
+}
+
+async function downloadGapExcel() {
+  if (!window._lastGapData) return alert('No data.');
+  try {
+    const res = await fetch('/api/content-gap/download-excel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(window._lastGapData),
+    });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url;
+    a.download = 'content_gap_report.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) { alert('Excel download failed: ' + err.message); }
+}
+
+async function downloadGapPdf() {
+  if (!window._lastGapData) return alert('No data.');
+  try {
+    const res = await fetch('/api/content-gap/download-pdf', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(window._lastGapData),
+    });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url;
+    a.download = 'content_gap_report.pdf'; a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) { alert('PDF download failed: ' + err.message); }
 }
 </script>
 </body>
