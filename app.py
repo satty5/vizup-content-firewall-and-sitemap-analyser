@@ -2581,7 +2581,7 @@ async def download_comparison_pdf(request: Request):
 # ---------------------------------------------------------------------------
 
 _SITEMAP_NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
-_GAP_MAX_URLS = 500
+_GAP_MAX_URLS = 0  # 0 = no cap, process all URLs from sitemaps
 _GAP_METADATA_CONCURRENCY = 10
 
 _CMS_SITEMAP_PATHS: dict[str, list[str]] = {
@@ -3273,10 +3273,6 @@ async def content_gap_discover(request: Request):
             seen.add(u)
             unique.append(e)
 
-    if len(unique) > _GAP_MAX_URLS:
-        unique.sort(key=lambda x: x.get("lastmod", ""), reverse=True)
-        unique = unique[:_GAP_MAX_URLS]
-
     classified = _classify_gap_urls(unique, domain)
     freshness = _compute_freshness(unique)
 
@@ -3364,9 +3360,6 @@ async def content_gap_analyze(request: Request):
                 if u not in seen:
                     seen.add(u)
                     uniq.append(e)
-            if len(uniq) > _GAP_MAX_URLS:
-                uniq.sort(key=lambda x: x.get("lastmod", ""), reverse=True)
-                uniq = uniq[:_GAP_MAX_URLS]
             cl = _classify_gap_urls(uniq, dom)
             log.info(f"  {dom}: {cl['total']} URLs")
             stage_1_data[dom] = {
@@ -3415,7 +3408,7 @@ async def content_gap_analyze(request: Request):
             cl = s1.get("classified", {})
             content_urls = [e["url"] for e in
                             cl.get("blog_posts", []) + cl.get("landing_pages", [])]
-            sample = content_urls[:_GAP_MAX_URLS]
+            sample = content_urls
             log.info(f"  Extracting metadata for {dom}: {len(sample)} pages...")
             meta = await _batch_extract_metadata(sample, _GAP_METADATA_CONCURRENCY) if sample else []
             ok = sum(1 for m in meta if m.get("status") == "ok")
