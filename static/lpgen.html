@@ -1,0 +1,2794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vizup Soul — LP Generator</title>
+<style>
+:root {
+  --bg: #0a0a0f;
+  --surface: #12121a;
+  --surface2: #1a1a26;
+  --surface3: #22222e;
+  --border: #2a2a3a;
+  --border-hover: #3a3a50;
+  --text: #e4e4ed;
+  --text-dim: #8888a0;
+  --text-muted: #55556a;
+  --accent: #6c5ce7;
+  --accent-glow: rgba(108,92,231,0.15);
+  --accent-hover: #5b4bd5;
+  --red: #ff4757;
+  --red-bg: rgba(255,71,87,0.08);
+  --orange: #ffa502;
+  --orange-bg: rgba(255,165,2,0.08);
+  --green: #2ed573;
+  --green-bg: rgba(46,213,115,0.08);
+  --yellow: #eccc68;
+  --yellow-bg: rgba(236,204,104,0.08);
+  --blue: #70a1ff;
+  --blue-bg: rgba(112,161,255,0.08);
+  --teal: #1abc9c;
+  --teal-bg: rgba(26,188,156,0.08);
+  --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --radius: 10px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── HEADER ── */
+.app-header {
+  border-bottom: 1px solid var(--border);
+  padding: 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  height: 57px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.app-logo {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  margin-right: 32px;
+  white-space: nowrap;
+}
+
+.app-logo span { color: var(--accent); }
+
+.mode-nav {
+  display: flex;
+  gap: 0;
+  height: 57px;
+}
+
+.mode-link {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+
+.mode-link:hover { color: var(--text); }
+.mode-link.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.model-select {
+  padding: 6px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--sans);
+  outline: none;
+  cursor: pointer;
+}
+
+.model-select:focus { border-color: var(--accent); }
+
+/* ── MAIN LAYOUT ── */
+.lp-main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px 32px 80px;
+}
+
+.lp-section {
+  margin-bottom: 24px;
+}
+
+.section-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.section-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-number {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.section-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.badge-ready { background: var(--green-bg); color: var(--green); border: 1px solid rgba(46,213,115,0.2); }
+.badge-pending { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
+.badge-error { background: var(--red-bg); color: var(--red); border: 1px solid rgba(255,71,87,0.2); }
+.badge-loading { background: var(--accent-glow); color: var(--accent); border: 1px solid rgba(108,92,231,0.2); }
+
+.section-body {
+  padding: 24px;
+}
+
+/* ── SECTION A: INPUTS ── */
+.inputs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.input-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.input-column-header {
+  margin-bottom: 16px;
+}
+
+.input-column-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.input-column-header p {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.url-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.url-input {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--mono);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.url-input:focus { border-color: var(--accent); }
+.url-input::placeholder { color: var(--text-muted); }
+.url-input:disabled { opacity: 0.5; }
+
+.url-input.error { border-color: var(--red); }
+.url-input.success { border-color: var(--green); }
+
+.btn {
+  padding: 10px 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-family: var(--sans);
+}
+
+.btn:hover { border-color: var(--border-hover); background: var(--border); }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-sm { padding: 6px 14px; font-size: 12px; }
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 6px 12px;
+}
+.btn-ghost:hover { color: var(--text); background: var(--surface2); }
+
+.btn-danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+.btn-danger:hover { color: var(--red); }
+
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 16px;
+}
+
+.summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.summary-bar .check { color: var(--green); font-weight: 700; margin-right: 4px; }
+.summary-bar .stat { color: var(--text); font-family: var(--mono); }
+.summary-bar .sep { color: var(--border); }
+
+.error-msg {
+  padding: 10px 14px;
+  background: var(--red-bg);
+  border: 1px solid rgba(255,71,87,0.2);
+  border-radius: 8px;
+  color: var(--red);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.re-extract-link {
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  margin-left: 8px;
+  text-decoration: underline;
+  background: none;
+  border: none;
+  font-family: var(--sans);
+}
+
+/* Knowledge hub */
+.source-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.source-toggle-btn {
+  flex: 1;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: var(--sans);
+}
+
+.source-toggle-btn:hover { color: var(--text); }
+
+.source-toggle-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 32px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.upload-zone:hover { border-color: var(--accent); background: var(--accent-glow); }
+.upload-zone.dragover { border-color: var(--accent); background: var(--accent-glow); }
+
+.upload-zone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.upload-zone-icon { font-size: 28px; margin-bottom: 8px; color: var(--text-muted); }
+
+.upload-zone-text {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.upload-zone-text strong { color: var(--accent); }
+
+.upload-zone-formats {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.crawl-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.crawl-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+
+.crawl-item .crawl-icon { width: 16px; text-align: center; }
+.crawl-item .crawl-icon.done { color: var(--green); }
+.crawl-item .crawl-icon.loading { color: var(--accent); }
+.crawl-item .crawl-icon.error { color: var(--red); }
+
+.crawl-counter {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.hub-summary {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 12px;
+}
+
+.hub-summary-name {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.hub-summary-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.hub-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.hub-stat {
+  padding: 4px 10px;
+  background: var(--accent-glow);
+  border: 1px solid rgba(108,92,231,0.15);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+.hub-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.hub-details {
+  margin-top: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  display: none;
+}
+
+.hub-details.open { display: block; }
+
+.hub-detail-section {
+  margin-bottom: 12px;
+}
+
+.hub-detail-section h4 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.hub-detail-list {
+  list-style: none;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.hub-detail-list li {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.hub-detail-list li:last-child { border-bottom: none; }
+
+.saved-hubs-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.saved-hub-select {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--sans);
+  outline: none;
+  cursor: pointer;
+}
+
+.saved-hub-select:focus { border-color: var(--accent); }
+
+/* ── SECTION B: SCHEMA ── */
+.schema-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.schema-topbar-left {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.schema-topbar-left strong { color: var(--text); }
+
+.schema-topbar-right {
+  display: flex;
+  gap: 8px;
+}
+
+.schema-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schema-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.schema-card:hover { border-color: var(--border-hover); }
+.schema-card.excluded { opacity: 0.4; }
+.schema-card.dragging { box-shadow: 0 8px 32px rgba(0,0,0,0.4); border-color: var(--accent); z-index: 10; }
+
+.schema-card-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.drag-handle {
+  color: var(--text-muted);
+  cursor: grab;
+  font-size: 14px;
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1;
+}
+
+.drag-handle:active { cursor: grabbing; }
+
+.schema-pos {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  width: 24px;
+  text-align: center;
+}
+
+.type-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.type-hero { background: rgba(108,92,231,0.15); color: #a29bfe; border: 1px solid rgba(108,92,231,0.2); }
+.type-features { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(112,161,255,0.2); }
+.type-social_proof { background: var(--green-bg); color: var(--green); border: 1px solid rgba(46,213,115,0.2); }
+.type-comparison { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(255,165,2,0.2); }
+.type-pricing { background: var(--yellow-bg); color: var(--yellow); border: 1px solid rgba(236,204,104,0.2); }
+.type-faq { background: var(--teal-bg); color: var(--teal); border: 1px solid rgba(26,188,156,0.2); }
+.type-cta { background: var(--red-bg); color: var(--red); border: 1px solid rgba(255,71,87,0.2); }
+.type-footer { background: var(--surface3); color: var(--text-muted); border: 1px solid var(--border); }
+.type-custom, .type-default { background: var(--surface3); color: var(--text-dim); border: 1px solid var(--border); }
+.type-testimonials { background: var(--green-bg); color: var(--green); border: 1px solid rgba(46,213,115,0.2); }
+.type-how_it_works { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(112,161,255,0.2); }
+.type-integrations { background: var(--teal-bg); color: var(--teal); border: 1px solid rgba(26,188,156,0.2); }
+.type-stats { background: var(--accent-glow); color: var(--accent); border: 1px solid rgba(108,92,231,0.2); }
+
+.schema-preview {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schema-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.schema-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.schema-toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.schema-toggle input:checked + .schema-toggle-track {
+  background: var(--accent);
+}
+
+.schema-toggle-track::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+}
+
+.schema-toggle input:checked + .schema-toggle-track::after {
+  transform: translateX(16px);
+}
+
+.schema-expand-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px;
+  transition: transform 0.2s, color 0.15s;
+  display: flex;
+  align-items: center;
+}
+
+.schema-expand-btn:hover { color: var(--text); }
+.schema-expand-btn.open { transform: rotate(180deg); }
+
+.schema-detail {
+  display: none;
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.schema-detail.open { display: block; padding-top: 16px; }
+
+.schema-detail-grid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px 16px;
+  font-size: 12px;
+}
+
+.schema-detail-label {
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  padding-top: 4px;
+}
+
+.schema-detail-value {
+  color: var(--text);
+  background: var(--bg);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.schema-detail-value[contenteditable="true"]:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.schema-detail-value.list-value {
+  white-space: pre-wrap;
+}
+
+.schema-type-select {
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--sans);
+  outline: none;
+}
+
+.schema-type-select:focus { border-color: var(--accent); }
+
+/* ── SECTION C: CONFIG ── */
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.config-field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.config-field input,
+.config-field select,
+.config-field textarea {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--sans);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.config-field input:focus,
+.config-field select:focus,
+.config-field textarea:focus {
+  border-color: var(--accent);
+}
+
+.config-field input::placeholder,
+.config-field textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.config-field textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+.config-full { grid-column: 1 / -1; }
+
+.generate-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.btn-generate {
+  flex: 1;
+  padding: 14px 24px;
+  font-size: 15px;
+  font-weight: 600;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  font-family: var(--sans);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-generate:hover { background: var(--accent-hover); }
+.btn-generate:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── SECTION D: OUTPUT TABLE ── */
+.export-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 57px;
+  z-index: 50;
+}
+
+.export-bar-left {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.export-bar-left strong { color: var(--text); }
+
+.export-bar-right {
+  display: flex;
+  gap: 8px;
+}
+
+.output-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.output-table th {
+  text-align: left;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 2px solid var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  position: sticky;
+  top: 106px;
+  z-index: 40;
+}
+
+.output-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  font-size: 13px;
+}
+
+.output-table tr:hover td { background: rgba(108,92,231,0.04); }
+
+.output-table .col-num { width: 50px; }
+.output-table .col-section { width: 120px; }
+.output-table .col-copy { width: calc((100% - 50px - 120px - 100px) / 2); }
+.output-table .col-actions { width: 100px; text-align: center; }
+
+.copy-cell {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.copy-slot {
+  margin-bottom: 8px;
+}
+
+.copy-slot:last-child { margin-bottom: 0; }
+
+.copy-slot-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.copy-slot-value {
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.copy-slot-value.editable {
+  color: var(--text);
+  cursor: text;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition: border-color 0.15s, background 0.15s;
+  outline: none;
+}
+
+.copy-slot-value.editable:hover {
+  border-color: var(--border);
+  background: var(--surface2);
+}
+
+.copy-slot-value.editable:focus {
+  border-color: var(--accent);
+  background: var(--surface2);
+}
+
+.copy-slot-value.editable.modified {
+  border-left: 2px solid var(--accent);
+}
+
+td.new-copy-cell {
+  background: rgba(108,92,231,0.03);
+  border-left: 2px solid rgba(108,92,231,0.15);
+}
+
+.row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.15s;
+}
+
+.action-btn:hover { border-color: var(--accent); color: var(--accent); }
+.action-btn.accepted { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+.action-btn.spinning { animation: spin 1s linear infinite; }
+
+.row-accepted td { border-left-color: var(--green) !important; }
+.row-regenerating { opacity: 0.6; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.skeleton-row td {
+  padding: 16px;
+}
+
+.skeleton-block {
+  height: 14px;
+  background: var(--surface2);
+  border-radius: 4px;
+  animation: pulse 1.5s ease-in-out infinite;
+  margin-bottom: 6px;
+}
+
+.skeleton-block.w60 { width: 60%; }
+.skeleton-block.w80 { width: 80%; }
+.skeleton-block.w40 { width: 40%; }
+
+/* ── EMPTY STATES ── */
+.empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-muted);
+}
+
+.empty-state .icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+}
+
+.empty-state p {
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+/* ── GENERATION PROGRESS ── */
+.gen-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--accent-glow);
+  border: 1px solid rgba(108,92,231,0.15);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.gen-progress-text {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.gen-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.gen-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+/* ── STRATEGY PHASES ── */
+.strategy-phases {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.phase-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.phase-card.active { border-color: var(--accent); }
+.phase-card.done { border-color: var(--green); }
+.phase-card.error { border-color: var(--red); }
+
+.phase-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+}
+
+.phase-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.phase-icon.pending { background: var(--surface3); color: var(--text-muted); }
+.phase-icon.active { background: var(--accent-glow); color: var(--accent); }
+.phase-icon.done { background: var(--green-bg); color: var(--green); }
+
+.phase-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  flex: 1;
+}
+
+.phase-card.active .phase-label { color: var(--accent); }
+.phase-card.done .phase-label { color: var(--green); }
+
+.phase-summary {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-left: auto;
+  max-width: 400px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-expand-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 4px;
+  transition: transform 0.2s;
+}
+
+.phase-expand-btn.open { transform: rotate(180deg); }
+
+.phase-detail {
+  display: none;
+  padding: 0 16px 16px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.phase-detail.open { display: block; }
+
+.phase-detail-section {
+  margin-bottom: 10px;
+}
+
+.phase-detail-section h5 {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.phase-detail-section p,
+.phase-detail-section li {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.phase-detail-section ul {
+  list-style: disc;
+  padding-left: 18px;
+}
+
+/* Competitor URL field */
+.competitor-field {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--orange-bg);
+  border: 1px solid rgba(255,165,2,0.15);
+  border-radius: 8px;
+}
+
+.competitor-field label {
+  color: var(--orange);
+}
+
+.competitor-field .hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
+/* ── UTILITIES ── */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+.spinner-accent {
+  border-color: rgba(108,92,231,0.3);
+  border-top-color: var(--accent);
+}
+
+.hidden { display: none !important; }
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 24px 0;
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  .inputs-grid { grid-template-columns: 1fr; }
+  .config-grid { grid-template-columns: 1fr; }
+  .lp-main { padding: 16px; }
+  .output-table .col-section { display: none; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<header class="app-header">
+  <div class="header-left">
+    <div class="app-logo"><span>Vizup</span> Soul</div>
+    <nav class="mode-nav">
+      <a href="/" class="mode-link">Firewall</a>
+      <a href="/lpgen" class="mode-link active">LP Generator</a>
+    </nav>
+  </div>
+  <div class="header-right">
+    <select class="model-select" id="model-select">
+      <option value="">Loading models...</option>
+    </select>
+  </div>
+</header>
+
+<!-- ═══ MAIN VIEW ═══ -->
+<main class="lp-main">
+
+  <!-- ═══ SECTION A: INPUTS ═══ -->
+  <div class="lp-section fade-in" id="section-a">
+    <div class="section-card">
+      <div class="section-header">
+        <h2><span class="section-number">1</span> Inputs</h2>
+        <div style="display:flex;gap:8px;">
+          <span class="section-badge badge-pending" id="ref-badge">Reference pending</span>
+          <span class="section-badge badge-pending" id="hub-badge">Hub pending</span>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="inputs-grid">
+
+          <!-- Left: Reference Page -->
+          <div class="input-column">
+            <div class="input-column-header">
+              <h3>Reference Landing Page</h3>
+              <p>Provide a live landing page URL. We'll extract its structure and content as the template.</p>
+            </div>
+            <div class="url-input-row">
+              <input type="text" class="url-input" id="ref-url-input" placeholder="https://competitor.com/landing-page" spellcheck="false">
+              <button class="btn btn-primary" id="ref-extract-btn" disabled onclick="extractSchema()">Extract Structure</button>
+            </div>
+            <div id="ref-status"></div>
+          </div>
+
+          <!-- Right: Knowledge Hub -->
+          <div class="input-column">
+            <div class="input-column-header">
+              <h3>Knowledge Hub</h3>
+              <p>The source of truth for generating copy. Only verified information from this hub will be used.</p>
+            </div>
+
+            <div class="saved-hubs-row">
+              <select class="saved-hub-select" id="saved-hub-select" onchange="loadSavedHub()">
+                <option value="">Load existing hub...</option>
+              </select>
+              <button class="btn btn-icon btn-danger" title="Delete selected hub" onclick="deleteSavedHub()">&#x2715;</button>
+            </div>
+
+            <div class="source-toggle">
+              <button class="source-toggle-btn active" onclick="switchSource('website', this)">Website</button>
+              <button class="source-toggle-btn" onclick="switchSource('pdf', this)">PDF Upload</button>
+            </div>
+
+            <div id="source-website">
+              <div class="url-input-row">
+                <input type="text" class="url-input" id="hub-url-input" placeholder="https://yourbrand.com" spellcheck="false">
+                <button class="btn btn-primary" id="hub-build-btn" disabled onclick="buildKnowledge()">Build Knowledge Base</button>
+              </div>
+            </div>
+
+            <div id="source-pdf" class="hidden">
+              <div class="upload-zone" id="pdf-upload-zone">
+                <input type="file" accept=".pdf" onchange="handlePdfUpload(this)">
+                <div class="upload-zone-icon">&#128196;</div>
+                <div class="upload-zone-text">Drop a PDF here or <strong>click to browse</strong></div>
+                <div class="upload-zone-formats">Accepts .pdf, up to 20 MB</div>
+              </div>
+            </div>
+
+            <div id="hub-status"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION B: EXTRACTED SCHEMA ═══ -->
+  <div class="lp-section hidden fade-in" id="section-b">
+    <div class="section-card">
+      <div class="section-header">
+        <h2><span class="section-number">2</span> Page Structure</h2>
+        <div class="schema-topbar-right">
+          <button class="btn btn-sm btn-ghost" onclick="toggleAllSections(true)">Include All</button>
+          <button class="btn btn-sm btn-ghost" onclick="toggleAllSections(false)">Exclude All</button>
+          <button class="btn btn-sm btn-ghost" onclick="collapseAllCards()">Collapse All</button>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="schema-topbar">
+          <div class="schema-topbar-left" id="schema-count-label">
+            <strong>0</strong> sections extracted
+          </div>
+        </div>
+        <div class="schema-cards" id="schema-cards-container">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION C: CONFIGURATION ═══ -->
+  <div class="lp-section hidden fade-in" id="section-c">
+    <div class="section-card">
+      <div class="section-header">
+        <h2><span class="section-number">3</span> Configuration</h2>
+      </div>
+      <div class="section-body">
+        <div class="config-grid">
+          <div class="config-field">
+            <label>Page Type</label>
+            <select id="cfg-page-type">
+              <option value="landing_page">Landing Page</option>
+              <option value="comparison_page">Comparison Page</option>
+              <option value="persona_page">Persona Page</option>
+              <option value="solution_page">Solution Page</option>
+              <option value="product_page">Product Page</option>
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Target Audience</label>
+            <input type="text" id="cfg-audience" placeholder="e.g., RevOps leaders at B2B SaaS companies">
+          </div>
+          <div class="config-field">
+            <label>Tone</label>
+            <select id="cfg-tone">
+              <option value="professional">Professional</option>
+              <option value="conversational">Conversational</option>
+              <option value="technical">Technical</option>
+              <option value="bold_founder">Bold / Founder Voice</option>
+              <option value="authoritative">Authoritative</option>
+              <option value="friendly">Friendly</option>
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Primary CTA Text</label>
+            <input type="text" id="cfg-cta-text" placeholder="e.g., Book a Demo">
+          </div>
+          <div class="config-field">
+            <label>Primary CTA URL</label>
+            <input type="text" id="cfg-cta-url" placeholder="https://yourbrand.com/demo">
+          </div>
+          <div class="config-field">
+            <label>Secondary CTA Text <span style="color:var(--text-muted);font-weight:400;text-transform:none;">(optional)</span></label>
+            <input type="text" id="cfg-cta2-text" placeholder="e.g., Start Free Trial">
+          </div>
+          <div class="config-field config-full">
+            <label>Custom Instructions</label>
+            <textarea id="cfg-instructions" rows="3" placeholder="Any specific instructions: focus areas, sections to emphasize, claims to highlight, things to avoid..."></textarea>
+          </div>
+        </div>
+
+        <div class="competitor-field hidden" id="competitor-field">
+          <label>Competitor URL (for comparison research)</label>
+          <div class="hint">Required for comparison pages. We'll research this competitor live to build accurate comparisons against your knowledge hub.</div>
+          <div class="url-input-row" style="margin:0;">
+            <input type="text" class="url-input" id="cfg-competitor-url" placeholder="https://competitor.com" spellcheck="false">
+          </div>
+        </div>
+
+        <div class="generate-row">
+          <button class="btn-generate" id="generate-btn" disabled onclick="generateCopy()">
+            Generate Landing Page Copy
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION D: OUTPUT ═══ -->
+  <div class="lp-section hidden fade-in" id="section-d">
+    <div class="section-card">
+      <div class="export-bar">
+        <div class="export-bar-left">
+          Current vs New Copy — <strong id="output-section-count">0</strong> sections
+        </div>
+        <div class="export-bar-right">
+          <button class="btn btn-sm" onclick="copyAllNewCopy()" title="Copy all new copy to clipboard">&#128203; Copy All</button>
+          <button class="btn btn-sm" onclick="downloadExcel()" title="Download Excel report">&#128202; Download Excel</button>
+          <button class="btn btn-sm" onclick="previewHTML()" title="Open HTML preview in new tab">&#127912; Preview HTML</button>
+          <button class="btn btn-sm" onclick="downloadHTML()" title="Download HTML file">&#11015; Download HTML</button>
+        </div>
+      </div>
+      <div id="strategy-phases" class="strategy-phases hidden">
+        <div class="phase-card" id="phase-competitor_research" style="display:none;">
+          <div class="phase-header" onclick="togglePhaseDetail('competitor_research')">
+            <div class="phase-icon pending" id="phase-icon-competitor_research">0</div>
+            <div class="phase-label">Competitor Research</div>
+            <div class="phase-summary" id="phase-summary-competitor_research"></div>
+            <button class="phase-expand-btn" id="phase-expand-competitor_research">&#9660;</button>
+          </div>
+          <div class="phase-detail" id="phase-detail-competitor_research"></div>
+        </div>
+        <div class="phase-card" id="phase-research">
+          <div class="phase-header" onclick="togglePhaseDetail('research')">
+            <div class="phase-icon pending" id="phase-icon-research">1</div>
+            <div class="phase-label">Research &mdash; Gathering page requirements</div>
+            <div class="phase-summary" id="phase-summary-research"></div>
+            <button class="phase-expand-btn" id="phase-expand-research">&#9660;</button>
+          </div>
+          <div class="phase-detail" id="phase-detail-research"></div>
+        </div>
+        <div class="phase-card" id="phase-approach">
+          <div class="phase-header" onclick="togglePhaseDetail('approach')">
+            <div class="phase-icon pending" id="phase-icon-approach">2</div>
+            <div class="phase-label">Approach &mdash; Strategic positioning &amp; narrative</div>
+            <div class="phase-summary" id="phase-summary-approach"></div>
+            <button class="phase-expand-btn" id="phase-expand-approach">&#9660;</button>
+          </div>
+          <div class="phase-detail" id="phase-detail-approach"></div>
+        </div>
+        <div class="phase-card" id="phase-storyboard">
+          <div class="phase-header" onclick="togglePhaseDetail('storyboard')">
+            <div class="phase-icon pending" id="phase-icon-storyboard">3</div>
+            <div class="phase-label">Storyboard &mdash; Section-by-section narrative plan</div>
+            <div class="phase-summary" id="phase-summary-storyboard"></div>
+            <button class="phase-expand-btn" id="phase-expand-storyboard">&#9660;</button>
+          </div>
+          <div class="phase-detail" id="phase-detail-storyboard"></div>
+        </div>
+        <div class="phase-card" id="phase-copywriting">
+          <div class="phase-header" onclick="togglePhaseDetail('copywriting')">
+            <div class="phase-icon pending" id="phase-icon-copywriting">4</div>
+            <div class="phase-label">Copywriting &mdash; Final section-by-section copy</div>
+            <div class="phase-summary" id="phase-summary-copywriting"></div>
+            <button class="phase-expand-btn" id="phase-expand-copywriting">&#9660;</button>
+          </div>
+          <div class="phase-detail" id="phase-detail-copywriting"></div>
+        </div>
+      </div>
+      <div id="output-progress" class="hidden">
+        <div class="gen-progress">
+          <div class="spinner spinner-accent"></div>
+          <div class="gen-progress-text" id="gen-progress-text">Generating...</div>
+          <div class="gen-progress-bar"><div class="gen-progress-fill" id="gen-progress-fill" style="width:0%"></div></div>
+        </div>
+      </div>
+      <div id="output-table-container">
+        <div class="empty-state" id="output-empty">
+          <div class="icon">&#9997;</div>
+          <p>Configure your inputs above and click Generate to create landing page copy.</p>
+        </div>
+        <table class="output-table hidden" id="output-table">
+          <thead>
+            <tr>
+              <th class="col-num">#</th>
+              <th class="col-section">Section</th>
+              <th class="col-copy">Current Copy</th>
+              <th class="col-copy">New Copy</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="output-tbody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+/* ================================================================
+   LP GENERATOR — Client-side application
+   ================================================================ */
+
+// ── Global State ──
+let currentModel = '';
+let extractedSchema = null;   // PageSchema from backend
+let knowledgeHub = null;       // KnowledgeHub from backend
+let generatedSections = [];    // Array of GeneratedSection
+let originalNewCopy = {};      // position -> original new_copy for "modified" tracking
+
+const SECTION_TYPES = [
+  'hero','features','social_proof','comparison','pricing','faq',
+  'cta','footer','testimonials','how_it_works','integrations',
+  'stats','custom'
+];
+
+// ── Init ──
+document.addEventListener('DOMContentLoaded', () => {
+  initModels();
+  initInputListeners();
+  loadSavedHubs();
+  initDragDrop();
+});
+
+// ── Models ──
+async function initModels() {
+  try {
+    const res = await fetch('/api/models');
+    const data = await res.json();
+    const select = document.getElementById('model-select');
+    select.innerHTML = '';
+    const models = data.models || [];
+    models.forEach(m => {
+      if (!m.available) return;
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name;
+      select.appendChild(opt);
+    });
+    if (models.length > 0) {
+      currentModel = models.find(m => m.available)?.id || models[0].id;
+      select.value = currentModel;
+    }
+    select.addEventListener('change', () => { currentModel = select.value; });
+  } catch (e) {
+    document.getElementById('model-select').innerHTML = '<option value="gpt-5.2">GPT-5.2</option>';
+    currentModel = 'gpt-5.2';
+  }
+}
+
+// ── Input Listeners ──
+function initInputListeners() {
+  const refInput = document.getElementById('ref-url-input');
+  const refBtn = document.getElementById('ref-extract-btn');
+  refInput.addEventListener('input', () => {
+    refBtn.disabled = !refInput.value.trim();
+  });
+  refInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !refBtn.disabled) extractSchema();
+  });
+
+  const hubInput = document.getElementById('hub-url-input');
+  const hubBtn = document.getElementById('hub-build-btn');
+  hubInput.addEventListener('input', () => {
+    hubBtn.disabled = !hubInput.value.trim();
+  });
+  hubInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !hubBtn.disabled) buildKnowledge();
+  });
+
+  const pdfZone = document.getElementById('pdf-upload-zone');
+  pdfZone.addEventListener('dragover', (e) => { e.preventDefault(); pdfZone.classList.add('dragover'); });
+  pdfZone.addEventListener('dragleave', () => { pdfZone.classList.remove('dragover'); });
+  pdfZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    pdfZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handlePdfFile(e.dataTransfer.files[0]);
+  });
+
+  document.getElementById('cfg-page-type').addEventListener('change', (e) => {
+    const isComparison = e.target.value === 'comparison_page';
+    document.getElementById('competitor-field').classList.toggle('hidden', !isComparison);
+  });
+}
+
+// ── Source Toggle ──
+function switchSource(mode, btn) {
+  document.querySelectorAll('.source-toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('source-website').classList.toggle('hidden', mode !== 'website');
+  document.getElementById('source-pdf').classList.toggle('hidden', mode !== 'pdf');
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION A: REFERENCE EXTRACTION
+// ═══════════════════════════════════════════════════
+
+async function extractSchema() {
+  const url = document.getElementById('ref-url-input').value.trim();
+  if (!url) return;
+
+  const input = document.getElementById('ref-url-input');
+  const btn = document.getElementById('ref-extract-btn');
+  const status = document.getElementById('ref-status');
+  const badge = document.getElementById('ref-badge');
+
+  input.classList.remove('error', 'success');
+  input.disabled = true;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Extracting...';
+  badge.className = 'section-badge badge-loading';
+  badge.textContent = 'Extracting...';
+  status.innerHTML = '';
+
+  try {
+    const form = new FormData();
+    form.append('reference_url', url);
+    form.append('model', currentModel);
+
+    const res = await fetch('/api/lpgen/extract-schema', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Extraction failed');
+    }
+
+    extractedSchema = await res.json();
+    input.classList.add('success');
+    badge.className = 'section-badge badge-ready';
+    badge.textContent = 'Ready';
+
+    const sCount = extractedSchema.sections?.length || 0;
+    const wCount = extractedSchema.word_count || 0;
+    const pType = extractedSchema.page_type || 'page';
+
+    status.innerHTML = `
+      <div class="summary-bar">
+        <span class="check">&#10003;</span>
+        <span class="stat">${sCount} sections</span>
+        <span class="sep">/</span>
+        <span class="stat">${wCount.toLocaleString()} words</span>
+        <span class="sep">/</span>
+        <span class="stat">${pType.replace(/_/g, ' ')}</span>
+        <button class="re-extract-link" onclick="resetExtraction()">Re-extract</button>
+      </div>
+    `;
+
+    renderSchemaCards();
+    document.getElementById('section-b').classList.remove('hidden');
+    showConfigIfReady();
+
+  } catch (err) {
+    input.classList.add('error');
+    badge.className = 'section-badge badge-error';
+    badge.textContent = 'Error';
+    status.innerHTML = `<div class="error-msg">&#9888; ${escapeHtml(err.message)}</div>`;
+  } finally {
+    input.disabled = false;
+    btn.disabled = false;
+    btn.innerHTML = 'Extract Structure';
+  }
+}
+
+function resetExtraction() {
+  extractedSchema = null;
+  document.getElementById('ref-url-input').classList.remove('success', 'error');
+  document.getElementById('ref-status').innerHTML = '';
+  document.getElementById('ref-badge').className = 'section-badge badge-pending';
+  document.getElementById('ref-badge').textContent = 'Reference pending';
+  document.getElementById('section-b').classList.add('hidden');
+  document.getElementById('section-c').classList.add('hidden');
+  document.getElementById('section-d').classList.add('hidden');
+  document.getElementById('generate-btn').disabled = true;
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION A: KNOWLEDGE HUB
+// ═══════════════════════════════════════════════════
+
+async function buildKnowledge() {
+  const url = document.getElementById('hub-url-input').value.trim();
+  if (!url) return;
+
+  const btn = document.getElementById('hub-build-btn');
+  const status = document.getElementById('hub-status');
+  const badge = document.getElementById('hub-badge');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Building...';
+  badge.className = 'section-badge badge-loading';
+  badge.textContent = 'Building...';
+  status.innerHTML = '<div class="crawl-progress" id="crawl-progress-list"></div>';
+
+  try {
+    const form = new FormData();
+    form.append('source_type', 'website');
+    form.append('website_url', url);
+    form.append('model', currentModel);
+
+    const res = await fetch('/api/lpgen/build-knowledge', { method: 'POST', body: form });
+
+    if (res.headers.get('content-type')?.includes('text/event-stream')) {
+      await handleKnowledgeSSE(res);
+    } else {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'Build failed');
+      }
+      knowledgeHub = await res.json();
+      renderHubSummary(knowledgeHub);
+    }
+
+    badge.className = 'section-badge badge-ready';
+    badge.textContent = 'Ready';
+    showConfigIfReady();
+
+  } catch (err) {
+    badge.className = 'section-badge badge-error';
+    badge.textContent = 'Error';
+    status.innerHTML = `<div class="error-msg">&#9888; ${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Build Knowledge Base';
+  }
+}
+
+async function handleKnowledgeSSE(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const progressList = document.getElementById('crawl-progress-list');
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        var eventType = line.slice(7).trim();
+      }
+      if (line.startsWith('data: ')) {
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (eventType === 'crawl_progress' && progressList) {
+            updateCrawlProgress(progressList, data);
+          } else if (eventType === 'complete') {
+            knowledgeHub = data;
+            renderHubSummary(data);
+          } else if (eventType === 'error') {
+            throw new Error(data.message || 'Build failed');
+          }
+        } catch (e) {
+          if (e.message !== 'Build failed') console.warn('SSE parse error:', e);
+          else throw e;
+        }
+      }
+    }
+  }
+}
+
+function updateCrawlProgress(container, data) {
+  const existing = container.querySelector(`[data-page="${data.page}"]`);
+  const icon = data.status === 'done' ? '<span class="crawl-icon done">&#10003;</span>'
+    : data.status === 'error' ? '<span class="crawl-icon error">&#10007;</span>'
+    : '<span class="crawl-icon loading"><span class="spinner spinner-accent" style="width:12px;height:12px;border-width:1.5px;"></span></span>';
+
+  if (existing) {
+    existing.querySelector('.crawl-icon')?.parentElement?.replaceWith(createCrawlItem(data.page, icon));
+  } else {
+    container.insertAdjacentHTML('beforeend', createCrawlItemHTML(data.page, icon));
+  }
+
+  const counter = container.querySelector('.crawl-counter');
+  const counterHTML = `<div class="crawl-counter">${data.pages_done || '?'} / ${data.pages_total || '?'} pages crawled</div>`;
+  if (counter) counter.outerHTML = counterHTML;
+  else container.insertAdjacentHTML('beforeend', counterHTML);
+}
+
+function createCrawlItemHTML(page, icon) {
+  return `<div class="crawl-item" data-page="${escapeHtml(page)}">${icon} <span>${escapeHtml(page)}</span></div>`;
+}
+
+function renderHubSummary(hub) {
+  const status = document.getElementById('hub-status');
+  const features = hub.features?.length || 0;
+  const pricing = hub.pricing?.length || 0;
+  const proofs = hub.proof_points?.length || 0;
+  const integrations = hub.integrations?.length || 0;
+  const uses = hub.use_cases?.length || 0;
+
+  status.innerHTML = `
+    <div class="hub-summary">
+      <div class="hub-summary-name">${escapeHtml(hub.company_name || hub.product_name || 'Unknown')}</div>
+      <div class="hub-summary-desc">${escapeHtml(hub.product_description || '')}</div>
+      <div class="hub-stats">
+        ${features ? `<span class="hub-stat">${features} features</span>` : ''}
+        ${pricing ? `<span class="hub-stat">${pricing} pricing tiers</span>` : ''}
+        ${proofs ? `<span class="hub-stat">${proofs} proof points</span>` : ''}
+        ${integrations ? `<span class="hub-stat">${integrations} integrations</span>` : ''}
+        ${uses ? `<span class="hub-stat">${uses} use cases</span>` : ''}
+        <span class="hub-stat">${hub.pages_crawled || '?'} pages crawled</span>
+      </div>
+      <div class="hub-actions">
+        <button class="btn btn-sm btn-primary" onclick="saveHub()">Save Hub</button>
+        <button class="btn btn-sm" onclick="downloadHub()">&#11015; Download JSON</button>
+        <button class="btn btn-sm btn-ghost" onclick="toggleHubDetails()">View Full Knowledge</button>
+      </div>
+      <div class="hub-details" id="hub-details">
+        ${renderHubDetails(hub)}
+      </div>
+    </div>
+  `;
+}
+
+function renderHubDetails(hub) {
+  let html = '';
+  const sections = [
+    { title: 'Features', items: hub.features?.map(f => `${f.name}: ${f.description}`) || [] },
+    { title: 'Pricing', items: hub.pricing?.map(p => `${p.tier}: ${p.price} — ${p.details || ''}`) || [] },
+    { title: 'Proof Points', items: hub.proof_points || [] },
+    { title: 'Integrations', items: hub.integrations || [] },
+    { title: 'Use Cases', items: hub.use_cases?.map(u => `${u.title}: ${u.description}`) || [] },
+    { title: 'Testimonials', items: hub.testimonials?.map(t => `"${t.quote}" — ${t.author}, ${t.role}`) || [] },
+    { title: 'CTA Patterns', items: hub.cta_patterns || [] },
+    { title: 'Tone Observations', items: hub.tone_observations ? [hub.tone_observations] : [] },
+  ];
+
+  for (const sec of sections) {
+    if (sec.items.length === 0) continue;
+    html += `
+      <div class="hub-detail-section">
+        <h4>${sec.title}</h4>
+        <ul class="hub-detail-list">
+          ${sec.items.map(i => `<li>${escapeHtml(String(i))}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+  return html;
+}
+
+function toggleHubDetails() {
+  document.getElementById('hub-details')?.classList.toggle('open');
+}
+
+function downloadHub() {
+  if (!knowledgeHub) return;
+  const name = (knowledgeHub.company_name || knowledgeHub.product_name || 'knowledge_hub').replace(/\s+/g, '_').toLowerCase();
+  const blob = new Blob([JSON.stringify(knowledgeHub, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}_knowledge_hub.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Knowledge hub downloaded');
+}
+
+async function saveHub() {
+  if (!knowledgeHub) return;
+  const name = prompt('Save knowledge hub as:', knowledgeHub.company_name || 'My Hub');
+  if (!name) return;
+
+  try {
+    const res = await fetch('/api/lpgen/save-knowledge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...knowledgeHub, name }),
+    });
+    if (!res.ok) throw new Error('Save failed');
+    const saved = await res.json();
+    knowledgeHub.id = saved.id;
+    loadSavedHubs();
+  } catch (e) {
+    alert('Failed to save hub: ' + e.message);
+  }
+}
+
+async function loadSavedHubs() {
+  try {
+    const res = await fetch('/api/lpgen/knowledge-hubs');
+    if (!res.ok) return;
+    const hubs = await res.json();
+    const select = document.getElementById('saved-hub-select');
+    select.innerHTML = '<option value="">Load existing hub...</option>';
+    for (const h of hubs) {
+      const opt = document.createElement('option');
+      opt.value = h.id;
+      opt.textContent = `${h.company_name || h.name} (${h.source_type}) — ${h.created_at || ''}`;
+      select.appendChild(opt);
+    }
+  } catch (e) {
+    // Silent fail on startup
+  }
+}
+
+async function loadSavedHub() {
+  const select = document.getElementById('saved-hub-select');
+  const hubId = select.value;
+  if (!hubId) return;
+
+  const badge = document.getElementById('hub-badge');
+  badge.className = 'section-badge badge-loading';
+  badge.textContent = 'Loading...';
+
+  try {
+    const res = await fetch(`/api/lpgen/knowledge-hubs/${hubId}`);
+    if (!res.ok) throw new Error('Load failed');
+    knowledgeHub = await res.json();
+    renderHubSummary(knowledgeHub);
+    badge.className = 'section-badge badge-ready';
+    badge.textContent = 'Ready';
+    showConfigIfReady();
+  } catch (e) {
+    badge.className = 'section-badge badge-error';
+    badge.textContent = 'Error';
+    document.getElementById('hub-status').innerHTML = `<div class="error-msg">&#9888; ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function deleteSavedHub() {
+  const select = document.getElementById('saved-hub-select');
+  const hubId = select.value;
+  if (!hubId) return;
+  if (!confirm('Delete this knowledge hub?')) return;
+
+  try {
+    await fetch(`/api/lpgen/knowledge-hubs/${hubId}`, { method: 'DELETE' });
+    loadSavedHubs();
+    if (knowledgeHub?.id === hubId) {
+      knowledgeHub = null;
+      document.getElementById('hub-status').innerHTML = '';
+      document.getElementById('hub-badge').className = 'section-badge badge-pending';
+      document.getElementById('hub-badge').textContent = 'Hub pending';
+    }
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+// PDF upload
+function handlePdfUpload(input) {
+  if (input.files.length) handlePdfFile(input.files[0]);
+}
+
+async function handlePdfFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    alert('Please upload a PDF file.');
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    alert('File too large. Maximum 20 MB.');
+    return;
+  }
+
+  const badge = document.getElementById('hub-badge');
+  const status = document.getElementById('hub-status');
+  badge.className = 'section-badge badge-loading';
+  badge.textContent = 'Parsing...';
+  status.innerHTML = '<div class="crawl-progress"><div class="crawl-item"><span class="crawl-icon loading"><span class="spinner spinner-accent" style="width:12px;height:12px;border-width:1.5px;"></span></span> <span>Parsing PDF and extracting knowledge...</span></div></div>';
+
+  try {
+    const form = new FormData();
+    form.append('source_type', 'pdf');
+    form.append('file', file);
+    form.append('model', currentModel);
+
+    const res = await fetch('/api/lpgen/build-knowledge', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'PDF processing failed');
+    }
+
+    knowledgeHub = await res.json();
+    renderHubSummary(knowledgeHub);
+    badge.className = 'section-badge badge-ready';
+    badge.textContent = 'Ready';
+    showConfigIfReady();
+
+  } catch (err) {
+    badge.className = 'section-badge badge-error';
+    badge.textContent = 'Error';
+    status.innerHTML = `<div class="error-msg">&#9888; ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function showConfigIfReady() {
+  if (extractedSchema && knowledgeHub) {
+    document.getElementById('section-c').classList.remove('hidden');
+    document.getElementById('generate-btn').disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION B: SCHEMA CARDS
+// ═══════════════════════════════════════════════════
+
+function renderSchemaCards() {
+  if (!extractedSchema?.sections) return;
+  const container = document.getElementById('schema-cards-container');
+  const countLabel = document.getElementById('schema-count-label');
+  const sections = extractedSchema.sections;
+
+  countLabel.innerHTML = `<strong>${sections.length}</strong> sections extracted`;
+
+  container.innerHTML = sections.map((sec, idx) => {
+    const copy = sec.current_copy || {};
+    const preview = copy.headline || copy.body || copy.cta_text || '(no text extracted)';
+    const typeClass = `type-${sec.section_type || 'default'}`;
+    const typeLabel = (sec.section_type || 'custom').replace(/_/g, ' ');
+
+    return `
+      <div class="schema-card" data-position="${sec.position}" draggable="true">
+        <div class="schema-card-row" onclick="toggleSchemaDetail(${idx})">
+          <div class="drag-handle" title="Drag to reorder">&#8942;&#8942;</div>
+          <span class="schema-pos">#${sec.position}</span>
+          <span class="type-badge ${typeClass}">${escapeHtml(typeLabel)}</span>
+          <span class="schema-preview">${escapeHtml(truncate(preview, 60))}</span>
+          <label class="schema-toggle" onclick="event.stopPropagation()">
+            <input type="checkbox" checked data-idx="${idx}" onchange="toggleSectionInclude(${idx}, this.checked)">
+            <span class="schema-toggle-track"></span>
+          </label>
+          <button class="schema-expand-btn" id="expand-btn-${idx}" title="Expand">&#9660;</button>
+        </div>
+        <div class="schema-detail" id="schema-detail-${idx}">
+          ${renderSchemaDetailContent(sec, idx)}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderSchemaDetailContent(sec, idx) {
+  const copy = sec.current_copy || {};
+  const slots = [
+    { key: 'headline', label: 'Headline' },
+    { key: 'subheadline', label: 'Subheadline' },
+    { key: 'body', label: 'Body' },
+    { key: 'cta_text', label: 'CTA Text' },
+    { key: 'cta_url', label: 'CTA URL' },
+    { key: 'list_items', label: 'List Items' },
+  ];
+
+  let html = `
+    <div class="schema-detail-grid">
+      <span class="schema-detail-label">Type</span>
+      <select class="schema-type-select" onchange="updateSectionType(${idx}, this.value)">
+        ${SECTION_TYPES.map(t => `<option value="${t}" ${t === sec.section_type ? 'selected' : ''}>${t.replace(/_/g, ' ')}</option>`).join('')}
+      </select>
+      <span class="schema-detail-label">Visual Role</span>
+      <div class="schema-detail-value">${escapeHtml(sec.visual_role || '')}</div>
+  `;
+
+  for (const slot of slots) {
+    const val = copy[slot.key];
+    if (val === undefined || val === null) continue;
+    const display = Array.isArray(val) ? val.join('\n') : String(val);
+    html += `
+      <span class="schema-detail-label">${slot.label}</span>
+      <div class="schema-detail-value${Array.isArray(val) ? ' list-value' : ''}">${escapeHtml(display)}</div>
+    `;
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function toggleSchemaDetail(idx) {
+  const detail = document.getElementById(`schema-detail-${idx}`);
+  const btn = document.getElementById(`expand-btn-${idx}`);
+  if (detail) {
+    detail.classList.toggle('open');
+    btn?.classList.toggle('open');
+  }
+}
+
+function toggleSectionInclude(idx, included) {
+  if (!extractedSchema?.sections[idx]) return;
+  extractedSchema.sections[idx]._included = included;
+  const card = document.querySelectorAll('.schema-card')[idx];
+  if (card) card.classList.toggle('excluded', !included);
+}
+
+function toggleAllSections(include) {
+  if (!extractedSchema?.sections) return;
+  extractedSchema.sections.forEach((sec, idx) => {
+    sec._included = include;
+    const checkbox = document.querySelector(`.schema-toggle input[data-idx="${idx}"]`);
+    if (checkbox) checkbox.checked = include;
+    const card = document.querySelectorAll('.schema-card')[idx];
+    if (card) card.classList.toggle('excluded', !include);
+  });
+}
+
+function collapseAllCards() {
+  document.querySelectorAll('.schema-detail').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.schema-expand-btn').forEach(b => b.classList.remove('open'));
+}
+
+function updateSectionType(idx, newType) {
+  if (!extractedSchema?.sections[idx]) return;
+  extractedSchema.sections[idx].section_type = newType;
+  const cards = document.querySelectorAll('.schema-card');
+  const badge = cards[idx]?.querySelector('.type-badge');
+  if (badge) {
+    badge.className = `type-badge type-${newType}`;
+    badge.textContent = newType.replace(/_/g, ' ');
+  }
+}
+
+// ── Drag & Drop for Schema Cards ──
+let draggedCard = null;
+
+function initDragDrop() {
+  document.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('.schema-card');
+    if (!card) return;
+    draggedCard = card;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  document.addEventListener('dragend', (e) => {
+    if (draggedCard) {
+      draggedCard.classList.remove('dragging');
+      draggedCard = null;
+      reindexPositions();
+    }
+  });
+
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    const container = document.getElementById('schema-cards-container');
+    if (!container) return;
+    const afterElement = getDragAfterElement(container, e.clientY);
+    if (draggedCard) {
+      if (afterElement) {
+        container.insertBefore(draggedCard, afterElement);
+      } else {
+        container.appendChild(draggedCard);
+      }
+    }
+  });
+}
+
+function getDragAfterElement(container, y) {
+  const cards = [...container.querySelectorAll('.schema-card:not(.dragging)')];
+  return cards.reduce((closest, child) => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) {
+      return { offset, element: child };
+    }
+    return closest;
+  }, { offset: Number.NEGATIVE_INFINITY }).element;
+}
+
+function reindexPositions() {
+  const cards = document.querySelectorAll('.schema-card');
+  cards.forEach((card, idx) => {
+    const posEl = card.querySelector('.schema-pos');
+    if (posEl) posEl.textContent = `#${idx + 1}`;
+    card.dataset.position = idx + 1;
+    if (extractedSchema?.sections) {
+      const oldPos = parseInt(card.dataset.position);
+      // Re-sort the sections array to match DOM order
+    }
+  });
+
+  // Rebuild sections array to match DOM order
+  if (extractedSchema?.sections) {
+    const cards = document.querySelectorAll('.schema-card');
+    const newSections = [];
+    cards.forEach((card, idx) => {
+      const origPos = parseInt(card.querySelector('[data-idx]')?.dataset.idx);
+      if (extractedSchema.sections[origPos]) {
+        const sec = { ...extractedSchema.sections[origPos], position: idx + 1 };
+        newSections.push(sec);
+      }
+    });
+    if (newSections.length === extractedSchema.sections.length) {
+      extractedSchema.sections = newSections;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION C + D: GENERATION
+// ═══════════════════════════════════════════════════
+
+async function generateCopy() {
+  if (!extractedSchema || !knowledgeHub) return;
+
+  const btn = document.getElementById('generate-btn');
+  const sectionD = document.getElementById('section-d');
+  const progress = document.getElementById('output-progress');
+  const tableEl = document.getElementById('output-table');
+  const emptyEl = document.getElementById('output-empty');
+  const phasesEl = document.getElementById('strategy-phases');
+
+  const includedSections = (extractedSchema.sections || []).filter(sec => sec._included !== false);
+  if (includedSections.length === 0) {
+    alert('No sections included. Toggle on at least one section in the schema.');
+    return;
+  }
+
+  const pageType = document.getElementById('cfg-page-type').value;
+  const competitorUrl = document.getElementById('cfg-competitor-url')?.value?.trim() || '';
+
+  const goals = {
+    page_type: pageType,
+    target_audience: document.getElementById('cfg-audience').value,
+    tone: document.getElementById('cfg-tone').value,
+    primary_cta_text: document.getElementById('cfg-cta-text').value,
+    primary_cta_url: document.getElementById('cfg-cta-url').value,
+    secondary_cta_text: document.getElementById('cfg-cta2-text').value,
+    custom_instructions: document.getElementById('cfg-instructions').value,
+  };
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Running pipeline...';
+  sectionD.classList.remove('hidden');
+  emptyEl.classList.add('hidden');
+  progress.classList.remove('hidden');
+  tableEl.classList.add('hidden');
+  generatedSections = [];
+  originalNewCopy = {};
+
+  // Reset and show strategy phases
+  resetPhases();
+  phasesEl.classList.remove('hidden');
+  const compPhase = document.getElementById('phase-competitor_research');
+  if (pageType === 'comparison_page' && competitorUrl) {
+    compPhase.style.display = '';
+  } else {
+    compPhase.style.display = 'none';
+  }
+
+  // Show skeleton rows
+  const tbody = document.getElementById('output-tbody');
+  tbody.innerHTML = includedSections.map(sec => `
+    <tr class="skeleton-row">
+      <td><span style="color:var(--text-muted)">#${sec.position}</span></td>
+      <td><span class="type-badge type-${sec.section_type || 'default'}">${(sec.section_type || 'custom').replace(/_/g,' ')}</span></td>
+      <td><div class="skeleton-block w80"></div><div class="skeleton-block w60"></div></td>
+      <td class="new-copy-cell"><div class="skeleton-block w80"></div><div class="skeleton-block w60"></div></td>
+      <td></td>
+    </tr>
+  `).join('');
+  tableEl.classList.remove('hidden');
+
+  try {
+    const payload = {
+      schema: extractedSchema,
+      knowledge_hub_id: knowledgeHub.id || '__current__',
+      goals,
+      model: currentModel,
+      included_positions: includedSections.map(s => s.position),
+      competitor_url: competitorUrl,
+    };
+
+    if (!knowledgeHub.id) {
+      payload.knowledge_hub_data = knowledgeHub;
+    }
+
+    const res = await fetch('/api/lpgen/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.headers.get('content-type')?.includes('text/event-stream')) {
+      await handleGenerateSSE(res, includedSections);
+    } else {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'Generation failed');
+      }
+      const data = await res.json();
+      generatedSections = data.sections || [];
+      generatedSections.forEach(sec => {
+        originalNewCopy[sec.position] = JSON.stringify(sec.new_copy);
+      });
+      renderOutputTable();
+    }
+
+    progress.classList.add('hidden');
+    document.getElementById('output-section-count').textContent = generatedSections.length;
+
+  } catch (err) {
+    progress.classList.add('hidden');
+    tbody.innerHTML = `<tr><td colspan="5"><div class="error-msg">&#9888; ${escapeHtml(err.message)}</div></td></tr>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Regenerate All';
+  }
+}
+
+async function handleGenerateSSE(response, includedSections) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let eventType = '';
+  let completedCount = 0;
+  const total = includedSections.length;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        eventType = line.slice(7).trim();
+      }
+      if (line.startsWith('data: ')) {
+        try {
+          const data = JSON.parse(line.slice(6));
+
+          if (eventType === 'stage_start') {
+            setPhaseActive(data.stage);
+            const pText = document.getElementById('gen-progress-text');
+            pText.textContent = data.label || `Running ${data.stage}...`;
+          }
+
+          if (eventType === 'stage_complete') {
+            setPhaseComplete(data.stage, data.summary || '', data.data);
+          }
+
+          if (eventType === 'section_progress') {
+            const pText = document.getElementById('gen-progress-text');
+            const pFill = document.getElementById('gen-progress-fill');
+            pText.textContent = `Writing section ${completedCount + 1} of ${total}... (${(data.section_type || '').replace(/_/g, ' ')})`;
+            pFill.style.width = `${(completedCount / total) * 100}%`;
+          }
+
+          if (eventType === 'section_complete') {
+            completedCount++;
+            generatedSections.push(data);
+            originalNewCopy[data.position] = JSON.stringify(data.new_copy);
+            updateOutputRow(data, includedSections);
+            const pFill = document.getElementById('gen-progress-fill');
+            pFill.style.width = `${(completedCount / total) * 100}%`;
+          }
+
+          if (eventType === 'complete') {
+            const pFill = document.getElementById('gen-progress-fill');
+            pFill.style.width = '100%';
+          }
+
+          if (eventType === 'error') {
+            throw new Error(data.message || 'Generation failed');
+          }
+        } catch (e) {
+          if (e.message && e.message !== 'Generation failed') console.warn('SSE parse:', e);
+          else throw e;
+        }
+      }
+    }
+  }
+}
+
+function updateOutputRow(section, includedSections) {
+  const idx = includedSections.findIndex(s => s.position === section.position);
+  if (idx === -1) return;
+
+  const tbody = document.getElementById('output-tbody');
+  const rows = tbody.querySelectorAll('tr');
+  if (rows[idx]) {
+    rows[idx].outerHTML = renderOutputRowHTML(section);
+  }
+}
+
+// ── Strategy Phases UI ──
+
+function resetPhases() {
+  const stages = ['competitor_research', 'research', 'approach', 'storyboard', 'copywriting'];
+  stages.forEach(stage => {
+    const card = document.getElementById(`phase-${stage}`);
+    const icon = document.getElementById(`phase-icon-${stage}`);
+    const summary = document.getElementById(`phase-summary-${stage}`);
+    const detail = document.getElementById(`phase-detail-${stage}`);
+    const expandBtn = document.getElementById(`phase-expand-${stage}`);
+    if (card) { card.className = 'phase-card'; }
+    if (icon) { icon.className = 'phase-icon pending'; }
+    if (summary) { summary.textContent = ''; }
+    if (detail) { detail.innerHTML = ''; detail.classList.remove('open'); }
+    if (expandBtn) { expandBtn.classList.remove('open'); }
+  });
+}
+
+function setPhaseActive(stage) {
+  const card = document.getElementById(`phase-${stage}`);
+  const icon = document.getElementById(`phase-icon-${stage}`);
+  const summary = document.getElementById(`phase-summary-${stage}`);
+  if (card) card.className = 'phase-card active';
+  if (icon) { icon.className = 'phase-icon active'; icon.innerHTML = '<span class="spinner spinner-accent" style="width:12px;height:12px;border-width:1.5px;"></span>'; }
+  if (summary) summary.textContent = 'In progress...';
+}
+
+function setPhaseComplete(stage, summary, data) {
+  const card = document.getElementById(`phase-${stage}`);
+  const icon = document.getElementById(`phase-icon-${stage}`);
+  const summaryEl = document.getElementById(`phase-summary-${stage}`);
+  const detailEl = document.getElementById(`phase-detail-${stage}`);
+
+  if (card) card.className = 'phase-card done';
+  if (icon) { icon.className = 'phase-icon done'; icon.textContent = '\u2713'; }
+  if (summaryEl) summaryEl.textContent = summary;
+
+  if (detailEl && data) {
+    detailEl.innerHTML = renderPhaseDetail(stage, data);
+  }
+}
+
+function togglePhaseDetail(stage) {
+  const detail = document.getElementById(`phase-detail-${stage}`);
+  const btn = document.getElementById(`phase-expand-${stage}`);
+  if (detail) detail.classList.toggle('open');
+  if (btn) btn.classList.toggle('open');
+}
+
+function renderPhaseDetail(stage, data) {
+  if (!data || typeof data !== 'object') return `<p>${escapeHtml(String(data))}</p>`;
+
+  let html = '';
+  const skip = ['summary', 'raw_response', 'parse_error'];
+
+  for (const [key, val] of Object.entries(data)) {
+    if (skip.includes(key)) continue;
+    const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+    if (key === 'sections' || key === 'sections_strategy') {
+      html += `<div class="phase-detail-section"><h5>Section Strategy</h5>`;
+      if (typeof val === 'object') {
+        for (const [sKey, sVal] of Object.entries(val)) {
+          html += `<div style="margin-bottom:8px;padding:8px;background:var(--bg);border-radius:6px;">`;
+          html += `<strong style="color:var(--accent);font-size:11px;">Section ${sKey}</strong>`;
+          if (typeof sVal === 'object') {
+            for (const [fKey, fVal] of Object.entries(sVal)) {
+              const fLabel = fKey.replace(/_/g, ' ');
+              const fDisplay = Array.isArray(fVal) ? fVal.map(v => escapeHtml(String(v))).join(', ') : escapeHtml(String(fVal));
+              html += `<div style="margin-top:4px;"><span style="color:var(--text-muted);font-size:10px;text-transform:uppercase;">${fLabel}:</span> <span style="color:var(--text-dim);">${fDisplay}</span></div>`;
+            }
+          } else {
+            html += `<p style="color:var(--text-dim);margin-top:4px;">${escapeHtml(String(sVal))}</p>`;
+          }
+          html += `</div>`;
+        }
+      }
+      html += `</div>`;
+      continue;
+    }
+
+    html += `<div class="phase-detail-section"><h5>${escapeHtml(label)}</h5>`;
+    if (Array.isArray(val)) {
+      html += `<ul>${val.map(v => `<li>${escapeHtml(String(v))}</li>`).join('')}</ul>`;
+    } else if (typeof val === 'object') {
+      html += `<p>${escapeHtml(JSON.stringify(val, null, 2))}</p>`;
+    } else {
+      html += `<p>${escapeHtml(String(val))}</p>`;
+    }
+    html += `</div>`;
+  }
+
+  return html || '<p style="color:var(--text-muted);">No details available.</p>';
+}
+
+// ═══════════════════════════════════════════════════
+// OUTPUT TABLE RENDERING
+// ═══════════════════════════════════════════════════
+
+function renderOutputTable() {
+  const tbody = document.getElementById('output-tbody');
+  const tableEl = document.getElementById('output-table');
+  tableEl.classList.remove('hidden');
+  document.getElementById('output-empty').classList.add('hidden');
+
+  tbody.innerHTML = generatedSections.map(sec => renderOutputRowHTML(sec)).join('');
+  document.getElementById('output-section-count').textContent = generatedSections.length;
+}
+
+function renderOutputRowHTML(sec) {
+  const current = sec.current_copy || {};
+  const newCopy = sec.new_copy || {};
+  const typeClass = `type-${sec.section_type || 'default'}`;
+  const typeLabel = (sec.section_type || 'custom').replace(/_/g, ' ');
+
+  return `
+    <tr data-position="${sec.position}">
+      <td class="col-num"><strong>#${sec.position}</strong></td>
+      <td class="col-section"><span class="type-badge ${typeClass}">${escapeHtml(typeLabel)}</span></td>
+      <td class="col-copy">
+        <div class="copy-cell">${renderCopySlots(current, false)}</div>
+      </td>
+      <td class="col-copy new-copy-cell">
+        <div class="copy-cell">${renderCopySlots(newCopy, true, sec.position)}</div>
+      </td>
+      <td class="col-actions">
+        <div class="row-actions">
+          <button class="action-btn" onclick="regenerateSection(${sec.position})" title="Regenerate this section">&#8635;</button>
+          <button class="action-btn" onclick="copySectionCopy(${sec.position})" title="Copy new copy">&#128203;</button>
+          <button class="action-btn" onclick="acceptSection(this)" title="Mark as accepted">&#10003;</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderCopySlots(copy, editable, position) {
+  const slots = [
+    { key: 'headline', label: 'Headline' },
+    { key: 'subheadline', label: 'Subheadline' },
+    { key: 'body', label: 'Body' },
+    { key: 'cta_text', label: 'CTA Text' },
+    { key: 'list_items', label: 'List Items' },
+  ];
+
+  let html = '';
+  for (const slot of slots) {
+    let val = copy[slot.key];
+    if (val === undefined || val === null || val === '') continue;
+    if (Array.isArray(val)) val = val.join(', ');
+
+    if (editable) {
+      html += `
+        <div class="copy-slot">
+          <div class="copy-slot-label">${slot.label}</div>
+          <div class="copy-slot-value editable" contenteditable="true"
+               data-position="${position}" data-slot="${slot.key}"
+               oninput="markModified(this)">${escapeHtml(String(val))}</div>
+        </div>
+      `;
+    } else {
+      html += `
+        <div class="copy-slot">
+          <div class="copy-slot-label">${slot.label}</div>
+          <div class="copy-slot-value">${escapeHtml(String(val))}</div>
+        </div>
+      `;
+    }
+  }
+  return html || '<span style="color:var(--text-muted);font-size:12px;">(no copy)</span>';
+}
+
+function markModified(el) {
+  el.classList.add('modified');
+  // Sync back to generatedSections
+  const pos = parseInt(el.dataset.position);
+  const slot = el.dataset.slot;
+  const sec = generatedSections.find(s => s.position === pos);
+  if (sec && sec.new_copy) {
+    sec.new_copy[slot] = el.textContent;
+  }
+}
+
+async function regenerateSection(position) {
+  const row = document.querySelector(`tr[data-position="${position}"]`);
+  if (!row) return;
+
+  const regenBtn = row.querySelector('.action-btn');
+  if (regenBtn) {
+    regenBtn.classList.add('spinning');
+    regenBtn.disabled = true;
+  }
+  row.classList.add('row-regenerating');
+
+  try {
+    const goals = {
+      page_type: document.getElementById('cfg-page-type').value,
+      target_audience: document.getElementById('cfg-audience').value,
+      tone: document.getElementById('cfg-tone').value,
+      primary_cta_text: document.getElementById('cfg-cta-text').value,
+      primary_cta_url: document.getElementById('cfg-cta-url').value,
+      secondary_cta_text: document.getElementById('cfg-cta2-text').value,
+      custom_instructions: document.getElementById('cfg-instructions').value,
+    };
+
+    const payload = {
+      schema: extractedSchema,
+      knowledge_hub_id: knowledgeHub.id || '__current__',
+      goals,
+      model: currentModel,
+      sections_to_generate: [position],
+    };
+
+    if (!knowledgeHub.id) {
+      payload.knowledge_hub_data = knowledgeHub;
+    }
+
+    const res = await fetch('/api/lpgen/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Regeneration failed' }));
+      throw new Error(err.detail);
+    }
+
+    const data = await res.json();
+    const newSection = data.sections?.[0];
+    if (newSection) {
+      const idx = generatedSections.findIndex(s => s.position === position);
+      if (idx !== -1) generatedSections[idx] = newSection;
+      originalNewCopy[position] = JSON.stringify(newSection.new_copy);
+      row.outerHTML = renderOutputRowHTML(newSection);
+    }
+  } catch (err) {
+    alert('Regeneration failed: ' + err.message);
+  } finally {
+    row.classList.remove('row-regenerating');
+    if (regenBtn) {
+      regenBtn.classList.remove('spinning');
+      regenBtn.disabled = false;
+    }
+  }
+}
+
+function copySectionCopy(position) {
+  const sec = generatedSections.find(s => s.position === position);
+  if (!sec?.new_copy) return;
+
+  const parts = [];
+  const nc = sec.new_copy;
+  if (nc.headline) parts.push(`Headline: ${nc.headline}`);
+  if (nc.subheadline) parts.push(`Subheadline: ${nc.subheadline}`);
+  if (nc.body) parts.push(`Body: ${nc.body}`);
+  if (nc.cta_text) parts.push(`CTA: ${nc.cta_text}`);
+  if (nc.list_items?.length) parts.push(`List Items:\n${nc.list_items.map(i => `  - ${i}`).join('\n')}`);
+
+  navigator.clipboard.writeText(parts.join('\n\n')).then(() => {
+    showToast('Section copy copied to clipboard');
+  });
+}
+
+function acceptSection(btn) {
+  btn.classList.toggle('accepted');
+  const row = btn.closest('tr');
+  if (row) row.classList.toggle('row-accepted');
+}
+
+// ═══════════════════════════════════════════════════
+// EXPORT ACTIONS
+// ═══════════════════════════════════════════════════
+
+function copyAllNewCopy() {
+  if (!generatedSections.length) return;
+
+  const text = generatedSections.map(sec => {
+    const nc = sec.new_copy || {};
+    const type = (sec.section_type || 'section').replace(/_/g, ' ').toUpperCase();
+    const parts = [`--- ${type} (Section #${sec.position}) ---`];
+    if (nc.headline) parts.push(`Headline: ${nc.headline}`);
+    if (nc.subheadline) parts.push(`Subheadline: ${nc.subheadline}`);
+    if (nc.body) parts.push(`Body: ${nc.body}`);
+    if (nc.cta_text) parts.push(`CTA: ${nc.cta_text}`);
+    if (nc.list_items?.length) parts.push(`List Items:\n${nc.list_items.map(i => `  - ${i}`).join('\n')}`);
+    return parts.join('\n');
+  }).join('\n\n');
+
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('All new copy copied to clipboard');
+  });
+}
+
+async function downloadExcel() {
+  if (!generatedSections.length) return;
+
+  try {
+    const res = await fetch('/api/lpgen/download-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sections: generatedSections,
+        company_name: knowledgeHub?.company_name || 'Landing Page',
+      }),
+    });
+
+    if (!res.ok) throw new Error('Download failed');
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lp_copy_${Date.now()}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Excel downloaded');
+  } catch (e) {
+    alert('Excel download failed: ' + e.message);
+  }
+}
+
+async function previewHTML() {
+  if (!generatedSections.length) return;
+
+  try {
+    const res = await fetch('/api/lpgen/preview-html', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sections: generatedSections,
+        company_name: knowledgeHub?.company_name || 'Company',
+        cta_url: document.getElementById('cfg-cta-url').value || '#',
+        page_type: document.getElementById('cfg-page-type').value,
+      }),
+    });
+
+    if (!res.ok) throw new Error('Preview generation failed');
+
+    const html = await res.text();
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    showToast('Preview opened in new tab');
+  } catch (e) {
+    alert('Preview failed: ' + e.message);
+  }
+}
+
+async function downloadHTML() {
+  if (!generatedSections.length) return;
+
+  try {
+    const res = await fetch('/api/lpgen/preview-html', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sections: generatedSections,
+        company_name: knowledgeHub?.company_name || 'Company',
+        cta_url: document.getElementById('cfg-cta-url').value || '#',
+        page_type: document.getElementById('cfg-page-type').value,
+      }),
+    });
+
+    if (!res.ok) throw new Error('HTML generation failed');
+
+    const html = await res.text();
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `landing_page_${Date.now()}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('HTML downloaded');
+  } catch (e) {
+    alert('HTML download failed: ' + e.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function truncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.slice(0, len) + '...' : str;
+}
+
+function showToast(msg) {
+  let toast = document.getElementById('toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.style.cssText = 'position:fixed;bottom:24px;right:24px;padding:12px 24px;background:var(--accent);color:#fff;border-radius:8px;font-size:13px;font-weight:500;z-index:1000;opacity:0;transition:opacity 0.3s;pointer-events:none;';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+}
+</script>
+
+</body>
+</html>

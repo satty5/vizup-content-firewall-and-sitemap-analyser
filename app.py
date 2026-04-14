@@ -60,6 +60,11 @@ async def index():
     return FileResponse("static/index.html")
 
 
+@app.get("/lpgen", response_class=HTMLResponse)
+async def lpgen():
+    return FileResponse("static/lpgen.html")
+
+
 @app.get("/api/models")
 async def get_models():
     models = []
@@ -3827,6 +3832,1115 @@ async def download_gap_pdf(request: Request):
     return Response(
         content=buf.getvalue(), media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="content_gap_report.pdf"'},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# LP GENERATOR API
+# ═══════════════════════════════════════════════════════════════════
+
+KNOWLEDGE_HUBS_DIR = Path("knowledge_hubs")
+KNOWLEDGE_HUBS_DIR.mkdir(exist_ok=True)
+
+
+@app.post("/api/lpgen/extract-schema")
+async def lpgen_extract_schema(
+    reference_url: str = Form(...),
+    model: str = Form(""),
+):
+    """Extract page structure and content schema from a reference landing page."""
+    model_to_use = model if model else DEFAULT_MODEL
+    set_model(model_to_use)
+
+    try:
+        html = await _fetch_page_html(reference_url)
+        page_text, word_count = await _fetch_and_extract(reference_url)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to fetch URL: {e}")
+
+    if word_count < 30:
+        raise HTTPException(status_code=422, detail="Could not extract meaningful content from the URL.")
+
+    context = _extract_page_context(html, reference_url)
+
+    max_chars = 30000
+    content_for_llm = page_text[:max_chars]
+
+    system_prompt = """You are an expert landing page analyst. You extract the structural blueprint of landing pages — identifying each distinct section, its type, visual role, and the copy within it.
+
+Return a JSON object with this exact structure:
+{
+  "page_type": "landing_page" or "comparison_page" or "persona_page" or "solution_page" or "product_page",
+  "sections": [
+    {
+      "position": 1,
+      "section_type": "hero" | "features" | "social_proof" | "comparison" | "pricing" | "faq" | "cta" | "footer" | "testimonials" | "how_it_works" | "integrations" | "stats" | "custom",
+      "visual_role": "Brief description of what this section does visually (1 sentence)",
+      "current_copy": {
+        "headline": "The main heading text if present",
+        "subheadline": "The secondary heading/tagline if present",
+        "body": "The main body paragraph text if present",
+        "cta_text": "Button or link text if present",
+        "cta_url": "Button/link URL if detectable",
+        "list_items": ["Array of bullet points or feature items if present"]
+      },
+      "content_slots": ["headline", "subheadline", "body", "cta_text", "list_items"]
+    }
+  ]
+}
+
+Rules:
+- Extract EVERY distinct content section you can identify from the page, in order from top to bottom.
+- "current_copy" should contain the ACTUAL text from the page, not descriptions of it.
+- Only include content_slots keys that actually have content in current_copy.
+- If a section has no clear copy (e.g., a logo grid), still include it with what you can extract.
+- Typically 6-15 sections per landing page. Do NOT over-split — group related content.
+- "visual_role" should describe the section's purpose, not repeat the copy."""
+
+    user_prompt = f"""Analyze this landing page and extract its complete structural blueprint.
+
+URL: {reference_url}
+
+Page metadata:
+- Title: {context.get('title_tag', '')}
+- Meta description: {context.get('meta_description', '')}
+
+Heading outline:
+{chr(10).join(context.get('heading_outline', [])[:20])}
+
+--- FULL PAGE CONTENT ---
+{content_for_llm}
+--- END ---
+
+Extract every section with its copy. Return JSON only."""
+
+    try:
+        result = await llm_review(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model_to_use,
+            max_tokens=16384,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schema extraction failed: {e}")
+
+    if result.get("parse_error"):
+        raise HTTPException(status_code=500, detail="Failed to parse LLM response as structured schema.")
+
+    result["source_url"] = reference_url
+    result["word_count"] = word_count
+    result["meta"] = {
+        "title": context.get("title_tag", ""),
+        "description": context.get("meta_description", ""),
+        "og_title": context.get("og_title", ""),
+        "og_description": context.get("og_description", ""),
+    }
+
+    return result
+
+
+@app.post("/api/lpgen/build-knowledge")
+async def lpgen_build_knowledge(
+    request: Request,
+    source_type: str = Form("website"),
+    website_url: str = Form(""),
+    model: str = Form(""),
+    file: UploadFile | None = File(None),
+):
+    """Build a knowledge hub from a website or PDF."""
+    model_to_use = model if model else DEFAULT_MODEL
+    set_model(model_to_use)
+
+    if source_type == "pdf":
+        if not file:
+            raise HTTPException(status_code=400, detail="PDF file is required.")
+        content_bytes = await file.read()
+        try:
+            text = parse_file(content_bytes, file.filename)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {e}")
+
+        hub = await _build_knowledge_from_text(text, model_to_use, source_type="pdf")
+        return hub
+
+    if not website_url:
+        raise HTTPException(status_code=400, detail="Website URL is required.")
+
+    async def _stream():
+        try:
+            pages_to_crawl = await _discover_site_pages(website_url)
+            total = len(pages_to_crawl)
+            crawled_pages = []
+
+            for i, page_url in enumerate(pages_to_crawl):
+                yield f"event: crawl_progress\ndata: {json.dumps({'page': page_url.replace(website_url, '/'), 'status': 'crawling', 'pages_done': i, 'pages_total': total})}\n\n"
+
+                try:
+                    text, wc = await _fetch_and_extract(page_url)
+                    crawled_pages.append({"url": page_url, "text": text[:8000], "word_count": wc})
+                    yield f"event: crawl_progress\ndata: {json.dumps({'page': page_url.replace(website_url, '/'), 'status': 'done', 'pages_done': i + 1, 'pages_total': total})}\n\n"
+                except Exception:
+                    yield f"event: crawl_progress\ndata: {json.dumps({'page': page_url.replace(website_url, '/'), 'status': 'error', 'pages_done': i + 1, 'pages_total': total})}\n\n"
+
+            combined_text = "\n\n".join(
+                f"--- PAGE: {p['url']} ({p['word_count']} words) ---\n{p['text']}"
+                for p in crawled_pages
+            )
+
+            hub = await _build_knowledge_from_text(
+                combined_text, model_to_use,
+                source_type="website", source_url=website_url,
+                pages_crawled=len(crawled_pages),
+            )
+            hub["raw_pages"] = [{"url": p["url"], "word_count": p["word_count"]} for p in crawled_pages]
+
+            yield f"event: complete\ndata: {json.dumps(hub, ensure_ascii=False, default=str)}\n\n"
+
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+async def _discover_site_pages(base_url: str) -> list[str]:
+    """Discover key pages from a website by parsing its navigation and common paths."""
+    base_url = base_url.rstrip("/")
+    if not base_url.startswith("http"):
+        base_url = "https://" + base_url
+
+    pages = [base_url]
+    common_paths = [
+        "/pricing", "/features", "/about", "/product", "/solutions",
+        "/integrations", "/customers", "/use-cases", "/enterprise",
+    ]
+
+    try:
+        html = await _fetch_page_html(base_url)
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+
+        parsed_base = urlparse(base_url)
+        base_domain = parsed_base.netloc
+
+        nav_links = set()
+        for nav in soup.find_all(["nav", "header"]):
+            for a in nav.find_all("a", href=True):
+                href = a["href"]
+                if href.startswith("/") and not href.startswith("//"):
+                    full_url = f"{parsed_base.scheme}://{base_domain}{href.split('#')[0].split('?')[0]}"
+                    if full_url != base_url and len(href) < 60:
+                        nav_links.add(full_url)
+                elif href.startswith(base_url):
+                    clean = href.split("#")[0].split("?")[0]
+                    if clean != base_url:
+                        nav_links.add(clean)
+
+        pages.extend(list(nav_links)[:12])
+
+        for path in common_paths:
+            full = base_url + path
+            if full not in pages:
+                pages.append(full)
+
+    except Exception:
+        for path in common_paths:
+            pages.append(base_url + path)
+
+    seen = set()
+    unique = []
+    for p in pages:
+        p_clean = p.rstrip("/")
+        if p_clean not in seen:
+            seen.add(p_clean)
+            unique.append(p_clean)
+
+    return unique[:15]
+
+
+async def _build_knowledge_from_text(
+    text: str, model: str,
+    source_type: str = "text",
+    source_url: str = "",
+    pages_crawled: int = 0,
+) -> dict:
+    """Use LLM to extract structured knowledge from raw text."""
+    max_chars = 50000
+    analysis_text = text[:max_chars]
+
+    system_prompt = """You are an expert product analyst. Extract comprehensive, structured knowledge from the provided website/document content.
+
+Return a JSON object with this EXACT structure — fill every field as thoroughly as possible from the source material:
+{
+  "company_name": "The company name",
+  "product_name": "The product name",
+  "product_description": "2-3 sentence product description",
+  "features": [{"name": "Feature name", "description": "What it does"}],
+  "pricing": [{"tier": "Plan name", "price": "Price string", "details": "Key inclusions"}],
+  "proof_points": ["Specific metrics, customer counts, awards, etc."],
+  "integrations": ["List of integrations/tools the product works with"],
+  "use_cases": [{"title": "Use case name", "description": "How the product helps"}],
+  "testimonials": [{"quote": "Customer quote", "author": "Name", "role": "Title/Company"}],
+  "cta_patterns": ["CTA text patterns found on the site"],
+  "tone_observations": "Description of the brand's tone and writing style"
+}
+
+Rules:
+- Only extract information that is EXPLICITLY stated in the content. Do NOT fabricate.
+- If a section has no data, return an empty array/string for that field.
+- Be thorough — capture every feature, every proof point, every pricing tier you can find."""
+
+    user_prompt = f"""Extract structured knowledge from this content:
+
+--- CONTENT ---
+{analysis_text}
+--- END ---
+
+Return the complete knowledge hub as JSON."""
+
+    result = await llm_review(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        model=model,
+        max_tokens=16384,
+    )
+
+    if result.get("parse_error"):
+        result = {
+            "company_name": "", "product_name": "", "product_description": "",
+            "features": [], "pricing": [], "proof_points": [],
+            "integrations": [], "use_cases": [], "testimonials": [],
+            "cta_patterns": [], "tone_observations": "",
+        }
+
+    result["source_type"] = source_type
+    result["source_url"] = source_url
+    result["pages_crawled"] = pages_crawled
+    return result
+
+
+@app.post("/api/lpgen/save-knowledge")
+async def lpgen_save_knowledge(request: Request):
+    """Save a knowledge hub for future reuse."""
+    data = await request.json()
+    hub_id = data.get("id") or f"hub_{int(datetime.now().timestamp())}"
+    data["id"] = hub_id
+    data["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    filepath = KNOWLEDGE_HUBS_DIR / f"{hub_id}.json"
+    filepath.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    return {"id": hub_id, "ok": True}
+
+
+@app.get("/api/lpgen/knowledge-hubs")
+async def lpgen_list_hubs():
+    """List all saved knowledge hubs."""
+    hubs = []
+    for f in sorted(KNOWLEDGE_HUBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(f.read_text())
+            hubs.append({
+                "id": data.get("id", f.stem),
+                "name": data.get("name", data.get("company_name", f.stem)),
+                "company_name": data.get("company_name", ""),
+                "source_type": data.get("source_type", ""),
+                "source_url": data.get("source_url", ""),
+                "created_at": data.get("created_at", ""),
+                "pages_crawled": data.get("pages_crawled", 0),
+            })
+        except Exception:
+            pass
+    return hubs
+
+
+@app.get("/api/lpgen/knowledge-hubs/{hub_id}")
+async def lpgen_get_hub(hub_id: str):
+    """Retrieve a specific knowledge hub."""
+    filepath = KNOWLEDGE_HUBS_DIR / f"{hub_id}.json"
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Knowledge hub not found.")
+    return json.loads(filepath.read_text())
+
+
+@app.delete("/api/lpgen/knowledge-hubs/{hub_id}")
+async def lpgen_delete_hub(hub_id: str):
+    """Delete a saved knowledge hub."""
+    filepath = KNOWLEDGE_HUBS_DIR / f"{hub_id}.json"
+    if filepath.exists():
+        filepath.unlink()
+    return {"ok": True}
+
+
+@app.post("/api/lpgen/generate")
+async def lpgen_generate(request: Request):
+    """Generate landing page copy via 4-stage pipeline: Research > Approach > Storyboard > Copy."""
+    data = await request.json()
+    schema = data.get("schema", {})
+    hub_id = data.get("knowledge_hub_id", "")
+    hub_data = data.get("knowledge_hub_data")
+    goals = data.get("goals", {})
+    model_to_use = data.get("model", "") or DEFAULT_MODEL
+    sections_to_gen = data.get("sections_to_generate", [])
+    included_positions = data.get("included_positions", [])
+    competitor_url = data.get("competitor_url", "")
+
+    set_model(model_to_use)
+
+    if hub_data:
+        hub = hub_data
+    elif hub_id and hub_id != "__current__":
+        filepath = KNOWLEDGE_HUBS_DIR / f"{hub_id}.json"
+        if not filepath.exists():
+            raise HTTPException(status_code=404, detail="Knowledge hub not found.")
+        hub = json.loads(filepath.read_text())
+    else:
+        raise HTTPException(status_code=400, detail="Knowledge hub is required.")
+
+    sections = schema.get("sections", [])
+    if included_positions:
+        sections = [s for s in sections if s.get("position") in included_positions]
+    if sections_to_gen:
+        sections = [s for s in sections if s.get("position") in sections_to_gen]
+
+    if not sections:
+        raise HTTPException(status_code=400, detail="No sections to generate.")
+
+    hub_context = _format_knowledge_hub_for_prompt(hub)
+    goals_context = _format_goals_for_prompt(goals)
+    page_type = goals.get("page_type", "landing_page")
+    is_comparison = page_type == "comparison_page"
+    is_single_regen = len(sections_to_gen) == 1
+
+    async def _stream():
+        competitor_context = ""
+
+        # ── STAGE 0: Competitor Research (if comparison page) ──
+        if is_comparison and competitor_url and not is_single_regen:
+            yield _sse("stage_start", {"stage": "competitor_research", "label": "Researching competitor..."})
+            try:
+                comp_text, comp_wc = await _fetch_and_extract(competitor_url)
+                competitor_context = f"\n--- COMPETITOR ({competitor_url}, {comp_wc} words) ---\n{comp_text[:12000]}\n--- END COMPETITOR ---"
+                yield _sse("stage_complete", {"stage": "competitor_research", "summary": f"Scraped {comp_wc:,} words from {competitor_url}"})
+            except Exception as e:
+                yield _sse("stage_complete", {"stage": "competitor_research", "summary": f"Failed to fetch competitor: {e}. Proceeding without."})
+
+        # ── STAGE 1: Research ──
+        if not is_single_regen:
+            yield _sse("stage_start", {"stage": "research", "label": "Researching page requirements..."})
+
+            research = await _pipeline_research(
+                sections, hub_context, goals_context, competitor_context, page_type, model_to_use
+            )
+            yield _sse("stage_complete", {
+                "stage": "research",
+                "data": research,
+                "summary": research.get("summary", ""),
+            })
+        else:
+            research = {}
+
+        # ── STAGE 2: Approach Definition ──
+        if not is_single_regen:
+            yield _sse("stage_start", {"stage": "approach", "label": "Defining strategic approach..."})
+
+            approach = await _pipeline_approach(
+                sections, hub_context, goals_context, competitor_context, research, page_type, model_to_use
+            )
+            yield _sse("stage_complete", {
+                "stage": "approach",
+                "data": approach,
+                "summary": approach.get("summary", ""),
+            })
+        else:
+            approach = {}
+
+        # ── STAGE 3: Storyboard ──
+        if not is_single_regen:
+            yield _sse("stage_start", {"stage": "storyboard", "label": "Building narrative storyboard..."})
+
+            storyboard = await _pipeline_storyboard(
+                sections, hub_context, goals_context, competitor_context, research, approach, page_type, model_to_use
+            )
+            yield _sse("stage_complete", {
+                "stage": "storyboard",
+                "data": storyboard,
+                "summary": storyboard.get("summary", ""),
+            })
+        else:
+            storyboard = {}
+
+        # ── STAGE 4: Section-by-section copy generation ──
+        yield _sse("stage_start", {"stage": "copywriting", "label": "Writing final copy..."})
+
+        storyboard_sections = storyboard.get("sections", {})
+        generated = []
+
+        for i, sec in enumerate(sections):
+            pos = sec["position"]
+            yield _sse("section_progress", {
+                "position": pos,
+                "section_type": sec.get("section_type", ""),
+                "status": "generating",
+            })
+
+            try:
+                section_brief = storyboard_sections.get(str(pos), storyboard_sections.get(pos, {}))
+                new_copy = await _pipeline_write_section(
+                    sec, hub_context, goals_context, competitor_context,
+                    research, approach, section_brief, page_type, model_to_use
+                )
+                result_section = {
+                    "position": pos,
+                    "section_type": sec.get("section_type", "custom"),
+                    "current_copy": sec.get("current_copy", {}),
+                    "new_copy": new_copy,
+                }
+            except Exception as e:
+                log.error(f"Section {pos} generation failed: {e}")
+                result_section = {
+                    "position": pos,
+                    "section_type": sec.get("section_type", "custom"),
+                    "current_copy": sec.get("current_copy", {}),
+                    "new_copy": {"headline": "(generation failed)", "body": str(e)},
+                }
+
+            generated.append(result_section)
+            yield _sse("section_complete", result_section)
+
+        yield _sse("stage_complete", {"stage": "copywriting", "summary": f"{len(generated)} sections written"})
+        yield _sse("complete", {"total_sections": len(generated), "model_used": model_to_use})
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+def _sse(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+# ── Pipeline Stage 1: Research ──
+async def _pipeline_research(
+    sections: list, hub_context: str, goals_context: str,
+    competitor_context: str, page_type: str, model: str,
+) -> dict:
+    section_summary = "\n".join(
+        f"  {s['position']}. [{s.get('section_type','custom')}] {s.get('visual_role','')}"
+        for s in sections
+    )
+
+    comparison_instruction = ""
+    if page_type == "comparison_page":
+        comparison_instruction = """
+COMPARISON PAGE RESEARCH:
+- Identify the key differentiators between the brand and the competitor.
+- Find specific areas where the brand wins (pricing, features, ease of use, speed, support).
+- Note any weaknesses the competitor has that the brand addresses.
+- Identify the competitor's strengths that need to be acknowledged or reframed.
+- Determine what a buyer comparing these two products cares about most."""
+
+    system_prompt = """You are a senior content strategist conducting research before writing a landing page. Your job is to gather and organize EVERY relevant fact, data point, and insight needed to write compelling, truthful copy.
+
+Return a JSON object:
+{
+  "summary": "2-3 sentence research summary",
+  "target_buyer": "Who is this page for? What stage of the buying journey? What triggered their search?",
+  "search_intent": "What query brought them here? What do they want to achieve?",
+  "key_pain_points": ["Pain points this page must address, drawn from the knowledge hub"],
+  "value_propositions": ["Specific value props to emphasize, with supporting evidence from the hub"],
+  "proof_points_to_use": ["Specific metrics, customer counts, testimonials to cite"],
+  "competitive_angles": ["How the brand differs from alternatives — based ONLY on verified facts"],
+  "pricing_positioning": "How to position the pricing (if relevant)",
+  "risk_objections": ["Likely buyer objections and how to counter them with hub facts"],
+  "cta_strategy": "What action to drive and why it makes sense at this funnel stage",
+  "tone_direction": "Specific tone guidance based on audience and page type"
+}
+
+RULES:
+- EVERY insight must be grounded in the Knowledge Hub facts. No fabrication.
+- Be specific. "Great product" is useless. "50+ data sources with 95% match rate" is useful.
+- Think like a buyer, not a marketer."""
+
+    user_prompt = f"""{goals_context}
+
+Page type: {page_type.replace('_', ' ')}
+
+Sections on this page:
+{section_summary}
+
+--- KNOWLEDGE HUB (Source of Truth) ---
+{hub_context}
+--- END KNOWLEDGE HUB ---
+{competitor_context}
+{comparison_instruction}
+
+Conduct thorough research for this landing page. Return JSON only."""
+
+    result = await llm_review(system_prompt=system_prompt, user_prompt=user_prompt, model=model, max_tokens=8192)
+    if result.get("parse_error"):
+        return {"summary": result.get("raw_response", "Research failed")[:500]}
+    return result
+
+
+# ── Pipeline Stage 2: Approach Definition ──
+async def _pipeline_approach(
+    sections: list, hub_context: str, goals_context: str,
+    competitor_context: str, research: dict, page_type: str, model: str,
+) -> dict:
+    comparison_instruction = ""
+    if page_type == "comparison_page":
+        comparison_instruction = """
+COMPARISON APPROACH:
+- Define whether to lead with the brand's strengths or the competitor's weaknesses.
+- Choose a framing: "alternative to X" vs "X vs Y" vs "why teams switch from X".
+- Decide on the comparison format: feature table, narrative, or advantage-led.
+- Plan how to handle areas where the competitor is objectively stronger."""
+
+    system_prompt = """You are a conversion strategist defining the strategic approach for a landing page. Based on research findings, define the narrative strategy.
+
+Return a JSON object:
+{
+  "summary": "2-3 sentence approach summary",
+  "positioning_statement": "The core 1-sentence positioning for this page",
+  "narrative_arc": "The emotional/logical journey: what the reader feels at the top → middle → bottom",
+  "primary_hook": "The opening angle that stops the scroll — must be specific, not generic",
+  "differentiation_strategy": "How we'll stand out from what the reader has already seen",
+  "proof_strategy": "When and how to deploy social proof, metrics, testimonials",
+  "objection_handling_plan": "Where in the page flow to address each major objection",
+  "cta_progression": "How CTAs escalate: awareness → interest → action across sections",
+  "content_density": "Light and punchy vs. detailed and comprehensive — and why",
+  "sections_strategy": {
+    "1": "Brief strategic note for section 1",
+    "2": "Brief strategic note for section 2"
+  }
+}
+
+RULES:
+- Be decisive. Pick an angle, don't hedge.
+- The approach must serve the specific page type and buyer intent.
+- Reference specific research findings to justify decisions."""
+
+    user_prompt = f"""{goals_context}
+
+Page type: {page_type.replace('_', ' ')}
+
+--- RESEARCH FINDINGS ---
+{json.dumps(research, indent=2)}
+--- END RESEARCH ---
+
+--- KNOWLEDGE HUB ---
+{hub_context[:8000]}
+--- END KNOWLEDGE HUB ---
+{competitor_context}
+{comparison_instruction}
+
+Define the strategic approach. Return JSON only."""
+
+    result = await llm_review(system_prompt=system_prompt, user_prompt=user_prompt, model=model, max_tokens=8192)
+    if result.get("parse_error"):
+        return {"summary": result.get("raw_response", "Approach definition failed")[:500]}
+    return result
+
+
+# ── Pipeline Stage 3: Storyboard ──
+async def _pipeline_storyboard(
+    sections: list, hub_context: str, goals_context: str,
+    competitor_context: str, research: dict, approach: dict,
+    page_type: str, model: str,
+) -> dict:
+    section_details = "\n".join(
+        f"  {s['position']}. [{s.get('section_type','custom')}] Role: {s.get('visual_role','')} | "
+        f"Slots: {', '.join(s.get('content_slots', []))}"
+        for s in sections
+    )
+
+    system_prompt = """You are a senior copywriter building a section-by-section storyboard — the detailed brief for each section's copy BEFORE writing it. Each section should have clear intent, specific messaging points, and a defined role in the overall narrative.
+
+Return a JSON object:
+{
+  "summary": "2-3 sentence storyboard overview",
+  "narrative_flow": "How the page reads as a story from top to bottom",
+  "sections": {
+    "1": {
+      "purpose": "What this section must accomplish in the reader's mind",
+      "messaging_points": ["Specific points to make, with data from the hub"],
+      "emotional_beat": "What the reader should feel after this section",
+      "transition_from_previous": "How this connects to the section above",
+      "copy_direction": "Specific guidance: headline angle, body approach, CTA if present",
+      "facts_to_cite": ["Specific facts/metrics from the hub to use here"],
+      "avoid": "What NOT to do in this section"
+    }
+  }
+}
+
+RULES:
+- Every section must have a distinct job. No two sections should make the same point.
+- Facts_to_cite must reference REAL data from the knowledge hub.
+- Think about the reader's scrolling journey — each section should earn the next scroll.
+- The storyboard is the blueprint. Be specific enough that a junior copywriter could execute it."""
+
+    user_prompt = f"""{goals_context}
+
+Page type: {page_type.replace('_', ' ')}
+
+--- RESEARCH ---
+{json.dumps(research, indent=2)[:4000]}
+--- END RESEARCH ---
+
+--- STRATEGIC APPROACH ---
+{json.dumps(approach, indent=2)[:4000]}
+--- END APPROACH ---
+
+Sections to storyboard:
+{section_details}
+
+--- KNOWLEDGE HUB ---
+{hub_context[:6000]}
+--- END KNOWLEDGE HUB ---
+{competitor_context[:4000] if competitor_context else ''}
+
+Build the section-by-section storyboard. Return JSON only."""
+
+    result = await llm_review(system_prompt=system_prompt, user_prompt=user_prompt, model=model, max_tokens=12000)
+    if result.get("parse_error"):
+        return {"summary": result.get("raw_response", "Storyboard failed")[:500], "sections": {}}
+    return result
+
+
+# ── Pipeline Stage 4: Write individual section copy ──
+async def _pipeline_write_section(
+    section: dict, hub_context: str, goals_context: str,
+    competitor_context: str, research: dict, approach: dict,
+    section_brief: dict, page_type: str, model: str,
+) -> dict:
+    current = section.get("current_copy", {})
+    section_type = section.get("section_type", "custom")
+    visual_role = section.get("visual_role", "")
+    slots = section.get("content_slots", [])
+    current_copy_text = json.dumps(current, indent=2) if current else "(empty)"
+
+    brief_block = ""
+    if section_brief:
+        brief_block = f"""
+--- STORYBOARD BRIEF FOR THIS SECTION ---
+Purpose: {section_brief.get('purpose', '')}
+Messaging points: {json.dumps(section_brief.get('messaging_points', []))}
+Emotional beat: {section_brief.get('emotional_beat', '')}
+Copy direction: {section_brief.get('copy_direction', '')}
+Facts to cite: {json.dumps(section_brief.get('facts_to_cite', []))}
+Avoid: {section_brief.get('avoid', '')}
+--- END BRIEF ---"""
+
+    approach_summary = ""
+    if approach:
+        approach_summary = f"""
+Positioning: {approach.get('positioning_statement', '')}
+Narrative arc: {approach.get('narrative_arc', '')}
+Primary hook: {approach.get('primary_hook', '')}
+Tone: {approach.get('content_density', '')}"""
+
+    comparison_rule = ""
+    if page_type == "comparison_page":
+        comparison_rule = """
+COMPARISON COPY RULES:
+- State facts about both products accurately. Do NOT invent competitor weaknesses.
+- Lead with the brand's genuine strengths, don't bash the competitor.
+- Use specific numbers, not vague claims ("starts at $49/mo" not "affordable pricing").
+- If you don't have a verified fact, don't mention it."""
+
+    system_prompt = f"""You are an elite conversion copywriter. You are writing ONE section of a landing page. You have been given a detailed storyboard brief — follow it precisely.
+
+{goals_context}
+
+STRATEGIC CONTEXT:
+{approach_summary}
+
+WRITING RULES:
+1. Use ONLY facts from the Knowledge Hub. Zero fabrication.
+2. Follow the storyboard brief for this section — it defines what to say and how.
+3. Match the structural density of the reference copy (same number of content slots).
+4. Write for conversion: specific, concrete, benefit-driven.
+5. No filler phrases. No AI clichés ("revolutionize", "leverage", "empower", "seamless", "cutting-edge"). No emojis.
+6. Every sentence must earn its place — if it doesn't advance the sale, cut it.
+{comparison_rule}
+
+--- KNOWLEDGE HUB ---
+{hub_context[:10000]}
+--- END KNOWLEDGE HUB ---
+{competitor_context[:6000] if competitor_context else ''}"""
+
+    user_prompt = f"""Write copy for this section:
+
+Section type: {section_type}
+Visual role: {visual_role}
+Content slots: {', '.join(slots) if slots else 'headline, body'}
+{brief_block}
+
+Reference copy (match this structure):
+{current_copy_text}
+
+Return a JSON object with the new copy. Include ONLY the keys that have content:
+{{
+  "headline": "New headline text",
+  "subheadline": "New subheadline if applicable",
+  "body": "New body paragraph if applicable",
+  "cta_text": "New CTA button text if applicable",
+  "list_items": ["New list items if applicable"]
+}}
+
+Return ONLY the JSON, no other text."""
+
+    result = await llm_review(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        model=model,
+        temperature=0.4,
+    )
+
+    if result.get("parse_error"):
+        raw = result.get("raw_response", "")
+        return {"headline": raw[:200] if raw else "(parse error)", "body": ""}
+
+    return result
+
+
+def _format_knowledge_hub_for_prompt(hub: dict) -> str:
+    """Format knowledge hub data into a prompt-friendly string."""
+    parts = []
+    if hub.get("company_name"):
+        parts.append(f"Company: {hub['company_name']}")
+    if hub.get("product_name"):
+        parts.append(f"Product: {hub['product_name']}")
+    if hub.get("product_description"):
+        parts.append(f"Description: {hub['product_description']}")
+
+    if hub.get("features"):
+        parts.append("\nFeatures:")
+        for f in hub["features"]:
+            name = f.get("name", "") if isinstance(f, dict) else str(f)
+            desc = f.get("description", "") if isinstance(f, dict) else ""
+            parts.append(f"  - {name}: {desc}" if desc else f"  - {name}")
+
+    if hub.get("pricing"):
+        parts.append("\nPricing:")
+        for p in hub["pricing"]:
+            tier = p.get("tier", "") if isinstance(p, dict) else str(p)
+            price = p.get("price", "") if isinstance(p, dict) else ""
+            details = p.get("details", "") if isinstance(p, dict) else ""
+            parts.append(f"  - {tier}: {price} ({details})" if details else f"  - {tier}: {price}")
+
+    if hub.get("proof_points"):
+        parts.append("\nProof Points:")
+        for pp in hub["proof_points"]:
+            parts.append(f"  - {pp}")
+
+    if hub.get("integrations"):
+        parts.append(f"\nIntegrations: {', '.join(hub['integrations'])}")
+
+    if hub.get("use_cases"):
+        parts.append("\nUse Cases:")
+        for uc in hub["use_cases"]:
+            title = uc.get("title", "") if isinstance(uc, dict) else str(uc)
+            desc = uc.get("description", "") if isinstance(uc, dict) else ""
+            parts.append(f"  - {title}: {desc}" if desc else f"  - {title}")
+
+    if hub.get("testimonials"):
+        parts.append("\nTestimonials:")
+        for t in hub["testimonials"]:
+            if isinstance(t, dict):
+                parts.append(f'  - "{t.get("quote", "")}" — {t.get("author", "")}, {t.get("role", "")}')
+            else:
+                parts.append(f"  - {t}")
+
+    if hub.get("cta_patterns"):
+        parts.append(f"\nCTA Patterns: {', '.join(hub['cta_patterns'])}")
+
+    if hub.get("tone_observations"):
+        parts.append(f"\nTone: {hub['tone_observations']}")
+
+    return "\n".join(parts)
+
+
+def _format_goals_for_prompt(goals: dict) -> str:
+    """Format generation goals into prompt instructions."""
+    parts = []
+    if goals.get("page_type"):
+        parts.append(f"Page type: {goals['page_type'].replace('_', ' ')}")
+    if goals.get("target_audience"):
+        parts.append(f"Target audience: {goals['target_audience']}")
+    if goals.get("tone"):
+        parts.append(f"Tone: {goals['tone'].replace('_', ' ')}")
+    if goals.get("primary_cta_text"):
+        parts.append(f"Primary CTA: {goals['primary_cta_text']}")
+    if goals.get("primary_cta_url"):
+        parts.append(f"CTA URL: {goals['primary_cta_url']}")
+    if goals.get("secondary_cta_text"):
+        parts.append(f"Secondary CTA: {goals['secondary_cta_text']}")
+    if goals.get("custom_instructions"):
+        parts.append(f"Custom instructions: {goals['custom_instructions']}")
+    return "GENERATION GOALS:\n" + "\n".join(parts) if parts else ""
+
+
+@app.post("/api/lpgen/preview-html")
+async def lpgen_preview_html(request: Request):
+    """Render generated copy as a preview HTML page."""
+    data = await request.json()
+    sections = data.get("sections", [])
+    company_name = data.get("company_name", "Company")
+    cta_url = data.get("cta_url", "#")
+    page_type = data.get("page_type", "landing_page")
+
+    html = _render_preview_html(sections, company_name, cta_url, page_type)
+    return Response(content=html, media_type="text/html")
+
+
+def _render_preview_html(sections: list, company_name: str, cta_url: str, page_type: str) -> str:
+    """Build a self-contained preview HTML page from generated sections."""
+    accent = "#6c5ce7"
+
+    section_html_parts = []
+    for sec in sections:
+        nc = sec.get("new_copy", {})
+        stype = sec.get("section_type", "custom")
+        headline = nc.get("headline", "")
+        subheadline = nc.get("subheadline", "")
+        body = nc.get("body", "")
+        cta_text = nc.get("cta_text", "")
+        items = nc.get("list_items", [])
+
+        if stype == "hero":
+            section_html_parts.append(f"""
+    <section style="padding:100px 40px 80px;text-align:center;background:linear-gradient(135deg,#0a0a1a 0%,#1a1a3e 100%);">
+      <h1 style="font-size:clamp(32px,5vw,56px);font-weight:700;margin-bottom:16px;line-height:1.15;">{_h(headline)}</h1>
+      {f'<p style="font-size:20px;color:rgba(255,255,255,0.7);max-width:640px;margin:0 auto 32px;line-height:1.6;">{_h(subheadline)}</p>' if subheadline else ''}
+      {f'<p style="font-size:16px;color:rgba(255,255,255,0.6);max-width:560px;margin:0 auto 36px;line-height:1.7;">{_h(body)}</p>' if body else ''}
+      {f'<a href="{_h(cta_url)}" style="display:inline-block;padding:16px 40px;background:{accent};color:#fff;border-radius:8px;font-weight:600;font-size:16px;text-decoration:none;">{_h(cta_text)}</a>' if cta_text else ''}
+    </section>""")
+
+        elif stype in ("features", "how_it_works", "integrations"):
+            items_html = ""
+            if items:
+                items_html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:24px;margin-top:32px;">'
+                for item in items:
+                    items_html += f'<div style="padding:24px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;"><p style="font-size:15px;line-height:1.6;">{_h(item)}</p></div>'
+                items_html += '</div>'
+
+            section_html_parts.append(f"""
+    <section style="padding:80px 40px;max-width:1100px;margin:0 auto;">
+      {f'<h2 style="font-size:36px;font-weight:700;text-align:center;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
+      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);text-align:center;max-width:600px;margin:0 auto 16px;">{_h(subheadline)}</p>' if subheadline else ''}
+      {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);text-align:center;max-width:560px;margin:0 auto;">{_h(body)}</p>' if body else ''}
+      {items_html}
+    </section>""")
+
+        elif stype in ("social_proof", "testimonials", "stats"):
+            section_html_parts.append(f"""
+    <section style="padding:60px 40px;background:rgba(108,92,231,0.04);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);">
+      <div style="max-width:1100px;margin:0 auto;text-align:center;">
+        {f'<h2 style="font-size:32px;font-weight:700;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
+        {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);max-width:560px;margin:0 auto 24px;">{_h(subheadline)}</p>' if subheadline else ''}
+        {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.7;max-width:600px;margin:0 auto;">{_h(body)}</p>' if body else ''}
+      </div>
+    </section>""")
+
+        elif stype == "cta":
+            section_html_parts.append(f"""
+    <section style="padding:80px 40px;text-align:center;background:linear-gradient(135deg,rgba(108,92,231,0.12) 0%,rgba(108,92,231,0.04) 100%);">
+      {f'<h2 style="font-size:36px;font-weight:700;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
+      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);max-width:500px;margin:0 auto 32px;">{_h(subheadline)}</p>' if subheadline else ''}
+      {f'<a href="{_h(cta_url)}" style="display:inline-block;padding:16px 40px;background:{accent};color:#fff;border-radius:8px;font-weight:600;font-size:16px;text-decoration:none;">{_h(cta_text)}</a>' if cta_text else ''}
+    </section>""")
+
+        elif stype == "faq":
+            items_html = ""
+            if items:
+                for item in items:
+                    items_html += f'<div style="padding:16px 0;border-bottom:1px solid rgba(255,255,255,0.08);"><p style="font-size:15px;line-height:1.6;">{_h(item)}</p></div>'
+
+            section_html_parts.append(f"""
+    <section style="padding:80px 40px;max-width:800px;margin:0 auto;">
+      {f'<h2 style="font-size:32px;font-weight:700;text-align:center;margin-bottom:32px;">{_h(headline)}</h2>' if headline else ''}
+      {f'<p style="font-size:16px;color:rgba(255,255,255,0.6);text-align:center;margin-bottom:32px;">{_h(body)}</p>' if body else ''}
+      {items_html}
+    </section>""")
+
+        elif stype == "pricing":
+            section_html_parts.append(f"""
+    <section style="padding:80px 40px;max-width:1100px;margin:0 auto;text-align:center;">
+      {f'<h2 style="font-size:36px;font-weight:700;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
+      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);max-width:500px;margin:0 auto 32px;">{_h(subheadline)}</p>' if subheadline else ''}
+      {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.7;">{_h(body)}</p>' if body else ''}
+    </section>""")
+
+        elif stype == "comparison":
+            section_html_parts.append(f"""
+    <section style="padding:80px 40px;max-width:1100px;margin:0 auto;">
+      {f'<h2 style="font-size:36px;font-weight:700;text-align:center;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
+      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);text-align:center;max-width:600px;margin:0 auto 24px;">{_h(subheadline)}</p>' if subheadline else ''}
+      {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.7;max-width:700px;margin:0 auto;">{_h(body)}</p>' if body else ''}
+    </section>""")
+
+        else:
+            section_html_parts.append(f"""
+    <section style="padding:60px 40px;max-width:1100px;margin:0 auto;">
+      {f'<h2 style="font-size:32px;font-weight:700;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
+      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);margin-bottom:16px;">{_h(subheadline)}</p>' if subheadline else ''}
+      {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.7;">{_h(body)}</p>' if body else ''}
+      {f'<a href="{_h(cta_url)}" style="display:inline-block;margin-top:24px;padding:12px 32px;background:{accent};color:#fff;border-radius:8px;font-weight:600;text-decoration:none;">{_h(cta_text)}</a>' if cta_text else ''}
+    </section>""")
+
+    all_sections = "\n".join(section_html_parts)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{_h(company_name)} — Landing Page Preview</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ background: #0a0a14; color: #e4e4ed; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; line-height: 1.6; }}
+a {{ color: inherit; }}
+.preview-banner {{ position: fixed; top: 0; left: 0; right: 0; z-index: 999; background: {accent}; color: #fff; text-align: center; padding: 8px 16px; font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 16px; }}
+.preview-banner a {{ color: #fff; text-decoration: underline; }}
+main {{ margin-top: 44px; }}
+</style>
+</head>
+<body>
+<div class="preview-banner">
+  PREVIEW — Generated by Vizup Soul LP Generator
+</div>
+<main>
+{all_sections}
+</main>
+</body>
+</html>"""
+
+
+def _h(text: str) -> str:
+    """HTML-escape helper for preview rendering."""
+    if not text:
+        return ""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+@app.post("/api/lpgen/download-excel")
+async def lpgen_download_excel(request: Request):
+    """Generate an Excel file with Current Copy vs New Copy comparison."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    import io
+
+    data = await request.json()
+    sections = data.get("sections", [])
+    company_name = data.get("company_name", "Landing Page")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "LP Copy"
+
+    ACCENT = "6C5CE7"
+    WHITE = "FFFFFF"
+    DARK = "1E1E1E"
+    BODY = "374151"
+    MUTED = "6B7280"
+    BG_LIGHT = "F9FAFB"
+    BG_STRIPE = "F3F4F6"
+    ACCENT_LIGHT = "EDE9FE"
+
+    header_font = Font(bold=True, size=11, color=WHITE)
+    header_fill = PatternFill(start_color=ACCENT, end_color=ACCENT, fill_type="solid")
+    title_font = Font(bold=True, size=14, color=ACCENT)
+    body_font = Font(size=10, color=BODY)
+    label_font = Font(bold=True, size=10, color=DARK)
+    muted_font = Font(size=9, color=MUTED)
+    stripe_fill = PatternFill(start_color=BG_STRIPE, end_color=BG_STRIPE, fill_type="solid")
+    thin_side = Side(style="thin", color="D1D5DB")
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    wrap = Alignment(wrap_text=True, vertical="top")
+
+    ws.merge_cells("A1:F1")
+    ws["A1"] = f"{company_name} — Landing Page Copy"
+    ws["A1"].font = title_font
+    ws.row_dimensions[1].height = 30
+
+    headers = ["#", "Section", "Slot", "Current Copy", "New Copy", "Status"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+
+    ws.column_dimensions["A"].width = 6
+    ws.column_dimensions["B"].width = 16
+    ws.column_dimensions["C"].width = 14
+    ws.column_dimensions["D"].width = 50
+    ws.column_dimensions["E"].width = 50
+    ws.column_dimensions["F"].width = 12
+
+    row = 4
+    slots = ["headline", "subheadline", "body", "cta_text", "list_items"]
+
+    for sec in sections:
+        current = sec.get("current_copy", {})
+        new_copy = sec.get("new_copy", {})
+        section_type = (sec.get("section_type", "custom") or "").replace("_", " ").title()
+        position = sec.get("position", "")
+        first_row_for_section = True
+
+        for slot in slots:
+            cur_val = current.get(slot)
+            new_val = new_copy.get(slot)
+            if cur_val is None and new_val is None:
+                continue
+
+            if isinstance(cur_val, list):
+                cur_val = "\n".join(f"- {v}" for v in cur_val)
+            if isinstance(new_val, list):
+                new_val = "\n".join(f"- {v}" for v in new_val)
+
+            ws.cell(row=row, column=1, value=position if first_row_for_section else "").font = label_font
+            ws.cell(row=row, column=2, value=section_type if first_row_for_section else "").font = label_font
+            ws.cell(row=row, column=3, value=slot.replace("_", " ").title()).font = muted_font
+            ws.cell(row=row, column=4, value=cur_val or "").font = body_font
+            ws.cell(row=row, column=5, value=new_val or "").font = body_font
+            ws.cell(row=row, column=6, value="").font = muted_font
+
+            for col in range(1, 7):
+                ws.cell(row=row, column=col).border = thin_border
+                ws.cell(row=row, column=col).alignment = wrap
+
+            if row % 2 == 0:
+                for col in range(1, 7):
+                    ws.cell(row=row, column=col).fill = stripe_fill
+
+            first_row_for_section = False
+            row += 1
+
+        if first_row_for_section:
+            ws.cell(row=row, column=1, value=position).font = label_font
+            ws.cell(row=row, column=2, value=section_type).font = label_font
+            ws.cell(row=row, column=3, value="").font = muted_font
+            ws.cell(row=row, column=4, value="(no copy)").font = muted_font
+            ws.cell(row=row, column=5, value="(no copy)").font = muted_font
+            for col in range(1, 7):
+                ws.cell(row=row, column=col).border = thin_border
+                ws.cell(row=row, column=col).alignment = wrap
+            row += 1
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="lp_copy_{company_name.replace(" ", "_")}.xlsx"'},
     )
 
 
