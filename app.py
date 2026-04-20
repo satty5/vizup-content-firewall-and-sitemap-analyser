@@ -23,7 +23,7 @@ from collections import Counter
 
 import httpx
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, FileResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from models.brand_context import BrandContext, ContentBrief
@@ -75,6 +75,7 @@ async def get_models():
             "name": m["name"],
             "provider": m["provider"],
             "available": available,
+            "thinking": m.get("thinking", False),
         })
     default = DEFAULT_MODEL
     if not any(m["id"] == default and m["available"] for m in models):
@@ -3836,1114 +3837,1469 @@ async def download_gap_pdf(request: Request):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# LP GENERATOR API
+# LP GENERATOR API  (v2 — data-first approach)
 # ═══════════════════════════════════════════════════════════════════
 
-KNOWLEDGE_HUBS_DIR = Path("knowledge_hubs")
-KNOWLEDGE_HUBS_DIR.mkdir(exist_ok=True)
+
+def _lp_sse(event: str, data: Any) -> str:
+    """Format an SSE message for LP generator endpoints."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
-@app.post("/api/lpgen/extract-schema")
-async def lpgen_extract_schema(
-    reference_url: str = Form(...),
-    model: str = Form(""),
-):
-    """Extract page structure and content schema from a reference landing page."""
-    model_to_use = model if model else DEFAULT_MODEL
-    set_model(model_to_use)
-
-    try:
-        html = await _fetch_page_html(reference_url)
-        page_text, word_count = await _fetch_and_extract(reference_url)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to fetch URL: {e}")
-
-    if word_count < 30:
-        raise HTTPException(status_code=422, detail="Could not extract meaningful content from the URL.")
-
-    context = _extract_page_context(html, reference_url)
-
-    max_chars = 30000
-    content_for_llm = page_text[:max_chars]
-
-    system_prompt = """You are an expert landing page analyst. You extract the structural blueprint of landing pages — identifying each distinct section, its type, visual role, and the copy within it.
-
-Return a JSON object with this exact structure:
-{
-  "page_type": "landing_page" or "comparison_page" or "persona_page" or "solution_page" or "product_page",
-  "sections": [
-    {
-      "position": 1,
-      "section_type": "hero" | "features" | "social_proof" | "comparison" | "pricing" | "faq" | "cta" | "footer" | "testimonials" | "how_it_works" | "integrations" | "stats" | "custom",
-      "visual_role": "Brief description of what this section does visually (1 sentence)",
-      "current_copy": {
-        "headline": "The main heading text if present",
-        "subheadline": "The secondary heading/tagline if present",
-        "body": "The main body paragraph text if present",
-        "cta_text": "Button or link text if present",
-        "cta_url": "Button/link URL if detectable",
-        "list_items": ["Array of bullet points or feature items if present"]
-      },
-      "content_slots": ["headline", "subheadline", "body", "cta_text", "list_items"]
-    }
-  ]
-}
-
-Rules:
-- Extract EVERY distinct content section you can identify from the page, in order from top to bottom.
-- "current_copy" should contain the ACTUAL text from the page, not descriptions of it.
-- Only include content_slots keys that actually have content in current_copy.
-- If a section has no clear copy (e.g., a logo grid), still include it with what you can extract.
-- Typically 6-15 sections per landing page. Do NOT over-split — group related content.
-- "visual_role" should describe the section's purpose, not repeat the copy."""
-
-    user_prompt = f"""Analyze this landing page and extract its complete structural blueprint.
-
-URL: {reference_url}
-
-Page metadata:
-- Title: {context.get('title_tag', '')}
-- Meta description: {context.get('meta_description', '')}
-
-Heading outline:
-{chr(10).join(context.get('heading_outline', [])[:20])}
-
---- FULL PAGE CONTENT ---
-{content_for_llm}
---- END ---
-
-Extract every section with its copy. Return JSON only."""
-
-    try:
-        result = await llm_review(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            model=model_to_use,
-            max_tokens=16384,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schema extraction failed: {e}")
-
-    if result.get("parse_error"):
-        raise HTTPException(status_code=500, detail="Failed to parse LLM response as structured schema.")
-
-    result["source_url"] = reference_url
-    result["word_count"] = word_count
-    result["meta"] = {
-        "title": context.get("title_tag", ""),
-        "description": context.get("meta_description", ""),
-        "og_title": context.get("og_title", ""),
-        "og_description": context.get("og_description", ""),
-    }
-
-    return result
+def _repair_truncated_json(raw: str) -> list[dict] | None:
+    """Attempt to repair a truncated JSON array by closing it early."""
+    raw = raw.strip()
+    if not raw.startswith("["):
+        return None
+    # Try to find the last complete object by looking for "},\n  {"
+    # and closing the array there
+    last_complete = raw.rfind("}")
+    if last_complete < 0:
+        return None
+    for end_pos in range(last_complete, 0, -1):
+        if raw[end_pos] == "}":
+            attempt = raw[:end_pos + 1] + "]"
+            try:
+                parsed = json.loads(attempt)
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+    return None
 
 
-@app.post("/api/lpgen/build-knowledge")
-async def lpgen_build_knowledge(
-    request: Request,
-    source_type: str = Form("website"),
-    website_url: str = Form(""),
-    model: str = Form(""),
-    file: UploadFile | None = File(None),
-):
-    """Build a knowledge hub from a website or PDF."""
-    model_to_use = model if model else DEFAULT_MODEL
-    set_model(model_to_use)
+# ── Crawl + Extract ──
 
-    if source_type == "pdf":
-        if not file:
-            raise HTTPException(status_code=400, detail="PDF file is required.")
-        content_bytes = await file.read()
-        try:
-            text = parse_file(content_bytes, file.filename)
-        except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {e}")
-
-        hub = await _build_knowledge_from_text(text, model_to_use, source_type="pdf")
-        return hub
-
-    if not website_url:
-        raise HTTPException(status_code=400, detail="Website URL is required.")
-
-    async def _stream():
-        try:
-            pages_to_crawl = await _discover_site_pages(website_url)
-            total = len(pages_to_crawl)
-            crawled_pages = []
-
-            for i, page_url in enumerate(pages_to_crawl):
-                yield f"event: crawl_progress\ndata: {json.dumps({'page': page_url.replace(website_url, '/'), 'status': 'crawling', 'pages_done': i, 'pages_total': total})}\n\n"
-
-                try:
-                    text, wc = await _fetch_and_extract(page_url)
-                    crawled_pages.append({"url": page_url, "text": text[:8000], "word_count": wc})
-                    yield f"event: crawl_progress\ndata: {json.dumps({'page': page_url.replace(website_url, '/'), 'status': 'done', 'pages_done': i + 1, 'pages_total': total})}\n\n"
-                except Exception:
-                    yield f"event: crawl_progress\ndata: {json.dumps({'page': page_url.replace(website_url, '/'), 'status': 'error', 'pages_done': i + 1, 'pages_total': total})}\n\n"
-
-            combined_text = "\n\n".join(
-                f"--- PAGE: {p['url']} ({p['word_count']} words) ---\n{p['text']}"
-                for p in crawled_pages
-            )
-
-            hub = await _build_knowledge_from_text(
-                combined_text, model_to_use,
-                source_type="website", source_url=website_url,
-                pages_crawled=len(crawled_pages),
-            )
-            hub["raw_pages"] = [{"url": p["url"], "word_count": p["word_count"]} for p in crawled_pages]
-
-            yield f"event: complete\ndata: {json.dumps(hub, ensure_ascii=False, default=str)}\n\n"
-
-        except Exception as e:
-            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
-
-    return StreamingResponse(_stream(), media_type="text/event-stream")
-
-
-async def _discover_site_pages(base_url: str) -> list[str]:
-    """Discover key pages from a website by parsing its navigation and common paths."""
+async def _crawl_site_pages(base_url: str, max_pages: int = 8) -> list[dict]:
+    """Discover and crawl key pages from a website. Returns list of {url, text}."""
     base_url = base_url.rstrip("/")
     if not base_url.startswith("http"):
         base_url = "https://" + base_url
 
-    pages = [base_url]
-    common_paths = [
-        "/pricing", "/features", "/about", "/product", "/solutions",
-        "/integrations", "/customers", "/use-cases", "/enterprise",
-    ]
+    pages_to_crawl = [base_url]
+    common_paths = ["/pricing", "/features", "/about", "/product", "/solutions",
+                    "/enterprise", "/customers", "/use-cases", "/docs"]
 
     try:
         html = await _fetch_page_html(base_url)
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html, "html.parser")
-
-        parsed_base = urlparse(base_url)
-        base_domain = parsed_base.netloc
+        parsed = urlparse(base_url)
 
         nav_links = set()
         for nav in soup.find_all(["nav", "header"]):
             for a in nav.find_all("a", href=True):
                 href = a["href"]
                 if href.startswith("/") and not href.startswith("//"):
-                    full_url = f"{parsed_base.scheme}://{base_domain}{href.split('#')[0].split('?')[0]}"
-                    if full_url != base_url and len(href) < 60:
-                        nav_links.add(full_url)
+                    full = f"{parsed.scheme}://{parsed.netloc}{href.split('#')[0].split('?')[0]}"
+                    if full != base_url and len(href) < 60:
+                        nav_links.add(full)
                 elif href.startswith(base_url):
                     clean = href.split("#")[0].split("?")[0]
                     if clean != base_url:
                         nav_links.add(clean)
-
-        pages.extend(list(nav_links)[:12])
-
-        for path in common_paths:
-            full = base_url + path
-            if full not in pages:
-                pages.append(full)
-
+        pages_to_crawl.extend(list(nav_links)[:8])
+        for p in common_paths:
+            full = base_url + p
+            if full not in pages_to_crawl:
+                pages_to_crawl.append(full)
     except Exception:
-        for path in common_paths:
-            pages.append(base_url + path)
+        for p in common_paths:
+            pages_to_crawl.append(base_url + p)
 
     seen = set()
     unique = []
-    for p in pages:
-        p_clean = p.rstrip("/")
-        if p_clean not in seen:
-            seen.add(p_clean)
-            unique.append(p_clean)
+    for p in pages_to_crawl:
+        pc = p.rstrip("/")
+        if pc not in seen:
+            seen.add(pc)
+            unique.append(pc)
+    unique = unique[:max_pages]
 
-    return unique[:15]
+    results = []
+    for page_url in unique:
+        try:
+            text, wc = await _fetch_and_extract(page_url)
+            if text and wc > 30:
+                results.append({"url": page_url, "text": text[:10000]})
+        except Exception:
+            pass
+    return results
 
 
-async def _build_knowledge_from_text(
-    text: str, model: str,
-    source_type: str = "text",
-    source_url: str = "",
-    pages_crawled: int = 0,
-) -> dict:
-    """Use LLM to extract structured knowledge from raw text."""
-    max_chars = 50000
-    analysis_text = text[:max_chars]
-
-    system_prompt = """You are an expert product analyst. Extract comprehensive, structured knowledge from the provided website/document content.
-
-Return a JSON object with this EXACT structure — fill every field as thoroughly as possible from the source material:
-{
-  "company_name": "The company name",
-  "product_name": "The product name",
-  "product_description": "2-3 sentence product description",
-  "features": [{"name": "Feature name", "description": "What it does"}],
-  "pricing": [{"tier": "Plan name", "price": "Price string", "details": "Key inclusions"}],
-  "proof_points": ["Specific metrics, customer counts, awards, etc."],
-  "integrations": ["List of integrations/tools the product works with"],
-  "use_cases": [{"title": "Use case name", "description": "How the product helps"}],
-  "testimonials": [{"quote": "Customer quote", "author": "Name", "role": "Title/Company"}],
-  "cta_patterns": ["CTA text patterns found on the site"],
-  "tone_observations": "Description of the brand's tone and writing style"
-}
-
-Rules:
-- Only extract information that is EXPLICITLY stated in the content. Do NOT fabricate.
-- If a section has no data, return an empty array/string for that field.
-- Be thorough — capture every feature, every proof point, every pricing tier you can find."""
-
-    user_prompt = f"""Extract structured knowledge from this content:
-
---- CONTENT ---
-{analysis_text}
---- END ---
-
-Return the complete knowledge hub as JSON."""
+async def _extract_structured_data(
+    company_name: str, pages: list[dict], model: str
+) -> list[dict]:
+    """Extract all available data points from crawled pages for one company."""
+    combined = "\n\n".join(
+        f"=== PAGE: {p['url']} ===\n{p['text']}" for p in pages
+    )
+    if not combined.strip():
+        return []
 
     result = await llm_review(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
+        system_prompt="""You are a data extraction specialist. Extract every factual data point 
+from this company's website content. Be exhaustive — capture everything that could be useful 
+for a comparison landing page.
+
+Return a JSON array where each item has:
+- data_point: short descriptive label (e.g. "STT Latency", "Free Credits", "SOC 2 Certification")
+- category: one of [performance, capabilities, pricing, social_proof, compliance, technical, deployment]
+- value: the specific value as stated on the website (e.g. "sub-70ms TTFT", "$0.005/min", "Yes")
+- source_page: the URL where this was found
+- verbatim_quote: the exact sentence/phrase from the website (max 120 chars)
+- confidence: "high" if explicitly stated, "medium" if implied, "low" if inferred
+
+RULES:
+- Only extract facts that are explicitly stated or very clearly implied
+- Do not invent or estimate values
+- Include product names, features, pricing tiers, performance metrics, compliance certs, 
+  testimonials (name + company + quote), customer counts, and any quantitative claims
+- For testimonials, each one should be a separate data point with the full quote as the value
+- Keep the list focused — max 40 most important data points""",
+        user_prompt=f"Company: {company_name}\n\nWebsite content:\n{combined[:60000]}",
         model=model,
         max_tokens=16384,
     )
 
+    # result can be a list (direct JSON array) or dict (wrapped or parse_error)
+    if isinstance(result, list):
+        log.info(f"[LP Extract] {company_name}: got {len(result)} data points (direct array)")
+        return result
+
+    if not isinstance(result, dict):
+        log.warning(f"[LP Extract] {company_name}: unexpected result type: {type(result)}")
+        return []
+
     if result.get("parse_error"):
-        result = {
-            "company_name": "", "product_name": "", "product_description": "",
-            "features": [], "pricing": [], "proof_points": [],
-            "integrations": [], "use_cases": [], "testimonials": [],
-            "cta_patterns": [], "tone_observations": "",
-        }
+        raw = result.get("raw_response", "")
+        log.warning(f"[LP Extract] Parse error for {company_name}, attempting repair...")
+        repaired = _repair_truncated_json(raw)
+        if repaired:
+            log.info(f"[LP Extract] {company_name}: repaired JSON, got {len(repaired)} data points")
+            return repaired
+        log.warning(f"[LP Extract] {company_name}: repair failed, raw[:200]: {str(raw)[:200]}")
+        return []
 
-    result["source_type"] = source_type
-    result["source_url"] = source_url
-    result["pages_crawled"] = pages_crawled
-    return result
+    # Dict with a list value — LLMs sometimes wrap arrays in a key
+    for key in result:
+        val = result[key]
+        if isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict):
+            log.info(f"[LP Extract] {company_name}: got {len(val)} data points (key: {key})")
+            return val
 
-
-@app.post("/api/lpgen/save-knowledge")
-async def lpgen_save_knowledge(request: Request):
-    """Save a knowledge hub for future reuse."""
-    data = await request.json()
-    hub_id = data.get("id") or f"hub_{int(datetime.now().timestamp())}"
-    data["id"] = hub_id
-    data["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    filepath = KNOWLEDGE_HUBS_DIR / f"{hub_id}.json"
-    filepath.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-    return {"id": hub_id, "ok": True}
+    log.warning(f"[LP Extract] {company_name}: dict with no list values, keys: {list(result.keys())}")
+    return []
 
 
-@app.get("/api/lpgen/knowledge-hubs")
-async def lpgen_list_hubs():
-    """List all saved knowledge hubs."""
-    hubs = []
-    for f in sorted(KNOWLEDGE_HUBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-        try:
-            data = json.loads(f.read_text())
-            hubs.append({
-                "id": data.get("id", f.stem),
-                "name": data.get("name", data.get("company_name", f.stem)),
-                "company_name": data.get("company_name", ""),
-                "source_type": data.get("source_type", ""),
-                "source_url": data.get("source_url", ""),
-                "created_at": data.get("created_at", ""),
-                "pages_crawled": data.get("pages_crawled", 0),
-            })
-        except Exception:
-            pass
-    return hubs
+async def _extract_page_structure(reference_html: str, model: str) -> list[dict]:
+    """Extract section structure from a reference landing page."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(reference_html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "iframe", "svg"]):
+        tag.decompose()
+    text = soup.get_text(separator="\n", strip=True)[:20000]
 
+    result = await llm_review(
+        system_prompt="""Analyze this landing page and extract ONLY its section structure.
+Do NOT extract copy or data — just the structural pattern.
 
-@app.get("/api/lpgen/knowledge-hubs/{hub_id}")
-async def lpgen_get_hub(hub_id: str):
-    """Retrieve a specific knowledge hub."""
-    filepath = KNOWLEDGE_HUBS_DIR / f"{hub_id}.json"
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="Knowledge hub not found.")
-    return json.loads(filepath.read_text())
+Return a JSON array where each item has:
+- section_type: one of [hero, comparison, advantages, products, use_cases, social_proof, 
+  security, pricing, faq, cta, custom]
+- position: order on page (1, 2, 3...)
+- description: one-sentence description of what this section does
 
+Each section_type should appear at most ONCE (except custom). 
+Focus on the major structural blocks, not minor UI elements.""",
+        user_prompt=f"Page content:\n{text}",
+        model=model,
+        max_tokens=2048,
+    )
 
-@app.delete("/api/lpgen/knowledge-hubs/{hub_id}")
-async def lpgen_delete_hub(hub_id: str):
-    """Delete a saved knowledge hub."""
-    filepath = KNOWLEDGE_HUBS_DIR / f"{hub_id}.json"
-    if filepath.exists():
-        filepath.unlink()
-    return {"ok": True}
+    default_structure = [
+        {"section_type": "hero", "position": 1, "description": "Hero with headline and CTA"},
+        {"section_type": "comparison", "position": 2, "description": "Feature comparison table"},
+        {"section_type": "advantages", "position": 3, "description": "Key advantages/differentiators"},
+        {"section_type": "social_proof", "position": 4, "description": "Testimonials and metrics"},
+        {"section_type": "faq", "position": 5, "description": "Frequently asked questions"},
+        {"section_type": "cta", "position": 6, "description": "Bottom call to action"},
+    ]
 
-
-@app.post("/api/lpgen/generate")
-async def lpgen_generate(request: Request):
-    """Generate landing page copy via 4-stage pipeline: Research > Approach > Storyboard > Copy."""
-    data = await request.json()
-    schema = data.get("schema", {})
-    hub_id = data.get("knowledge_hub_id", "")
-    hub_data = data.get("knowledge_hub_data")
-    goals = data.get("goals", {})
-    model_to_use = data.get("model", "") or DEFAULT_MODEL
-    sections_to_gen = data.get("sections_to_generate", [])
-    included_positions = data.get("included_positions", [])
-    competitor_url = data.get("competitor_url", "")
-
-    set_model(model_to_use)
-
-    if hub_data:
-        hub = hub_data
-    elif hub_id and hub_id != "__current__":
-        filepath = KNOWLEDGE_HUBS_DIR / f"{hub_id}.json"
-        if not filepath.exists():
-            raise HTTPException(status_code=404, detail="Knowledge hub not found.")
-        hub = json.loads(filepath.read_text())
+    if isinstance(result, list):
+        sections = result
+    elif isinstance(result, dict):
+        if result.get("parse_error"):
+            log.warning("[LP Structure] Parse error, using default structure")
+            return default_structure
+        sections = []
+        for key in result:
+            val = result[key]
+            if isinstance(val, list) and len(val) > 0:
+                sections = val
+                break
     else:
-        raise HTTPException(status_code=400, detail="Knowledge hub is required.")
-
-    sections = schema.get("sections", [])
-    if included_positions:
-        sections = [s for s in sections if s.get("position") in included_positions]
-    if sections_to_gen:
-        sections = [s for s in sections if s.get("position") in sections_to_gen]
+        sections = []
 
     if not sections:
-        raise HTTPException(status_code=400, detail="No sections to generate.")
+        log.warning("[LP Structure] No sections found, using default")
+        return default_structure
 
-    hub_context = _format_knowledge_hub_for_prompt(hub)
-    goals_context = _format_goals_for_prompt(goals)
-    page_type = goals.get("page_type", "landing_page")
-    is_comparison = page_type == "comparison_page"
-    is_single_regen = len(sections_to_gen) == 1
+    log.info(f"[LP Structure] Extracted {len(sections)} sections")
+    for i, s in enumerate(sections):
+        s["position"] = i + 1
+    return sections
+
+
+def _derive_comparison_table(
+    brand_name: str, brand_data: list[dict],
+    competitor_name: str, competitor_data: list[dict],
+) -> list[dict]:
+    """Merge extracted data from both companies into a comparison table."""
+    brand_map = {}
+    for d in brand_data:
+        key = d.get("data_point", "").strip().lower()
+        if key:
+            brand_map[key] = d
+
+    comp_map = {}
+    for d in competitor_data:
+        key = d.get("data_point", "").strip().lower()
+        if key:
+            comp_map[key] = d
+
+    all_keys = list(dict.fromkeys(
+        list(brand_map.keys()) + list(comp_map.keys())
+    ))
+
+    rows = []
+    for key in all_keys:
+        b = brand_map.get(key, {})
+        c = comp_map.get(key, {})
+        dp_name = b.get("data_point") or c.get("data_point") or key
+        rows.append({
+            "data_point": dp_name,
+            "category": b.get("category") or c.get("category", ""),
+            "brand_value": b.get("value", ""),
+            "brand_source": b.get("source_page", ""),
+            "brand_quote": b.get("verbatim_quote", ""),
+            "competitor_value": c.get("value", ""),
+            "competitor_source": c.get("source_page", ""),
+            "competitor_quote": c.get("verbatim_quote", ""),
+        })
+    return rows
+
+
+# ── Analyze Endpoint (SSE) ──
+
+@app.post("/api/lpgen/analyze")
+async def lpgen_analyze(request: Request):
+    """Crawl both websites + reference page, extract structured data, derive comparison table."""
+    data = await request.json()
+    brand_name = data.get("brand_name", "Brand")
+    brand_url = data.get("brand_url", "")
+    competitor_name = data.get("competitor_name", "Competitor")
+    competitor_url = data.get("competitor_url", "")
+    reference_url = data.get("reference_url", "")
+    model = data.get("model") or None
+
+    if model:
+        set_model(model)
 
     async def _stream():
-        competitor_context = ""
+        yield _lp_sse("progress", {"percent": 5, "message": f"Discovering pages on {brand_name} website..."})
 
-        # ── STAGE 0: Competitor Research (if comparison page) ──
-        if is_comparison and competitor_url and not is_single_regen:
-            yield _sse("stage_start", {"stage": "competitor_research", "label": "Researching competitor..."})
-            try:
-                comp_text, comp_wc = await _fetch_and_extract(competitor_url)
-                competitor_context = f"\n--- COMPETITOR ({competitor_url}, {comp_wc} words) ---\n{comp_text[:12000]}\n--- END COMPETITOR ---"
-                yield _sse("stage_complete", {"stage": "competitor_research", "summary": f"Scraped {comp_wc:,} words from {competitor_url}"})
-            except Exception as e:
-                yield _sse("stage_complete", {"stage": "competitor_research", "summary": f"Failed to fetch competitor: {e}. Proceeding without."})
+        # Parallel crawl
+        brand_pages, comp_pages, ref_html = [], [], ""
+        try:
+            crawl_tasks = [
+                _crawl_site_pages(brand_url),
+                _crawl_site_pages(competitor_url),
+            ]
+            results = await asyncio.gather(*crawl_tasks, return_exceptions=True)
+            brand_pages = results[0] if not isinstance(results[0], Exception) else []
+            comp_pages = results[1] if not isinstance(results[1], Exception) else []
+        except Exception as e:
+            yield _lp_sse("error", {"message": f"Crawl failed: {str(e)}"})
+            return
 
-        # ── STAGE 1: Research ──
-        if not is_single_regen:
-            yield _sse("stage_start", {"stage": "research", "label": "Researching page requirements..."})
+        yield _lp_sse("progress", {
+            "percent": 25,
+            "message": f"Crawled {len(brand_pages)} pages from {brand_name}, {len(comp_pages)} from {competitor_name}"
+        })
 
-            research = await _pipeline_research(
-                sections, hub_context, goals_context, competitor_context, page_type, model_to_use
+        # Fetch reference page
+        try:
+            ref_html = await _fetch_page_html(reference_url)
+            yield _lp_sse("progress", {"percent": 30, "message": "Reference page fetched"})
+        except Exception as e:
+            yield _lp_sse("progress", {"percent": 30, "message": f"Reference fetch failed: {e}, using default structure", "status": "error"})
+
+        # Parallel extraction
+        yield _lp_sse("progress", {"percent": 35, "message": f"Extracting data from {brand_name} website..."})
+
+        try:
+            extract_tasks = [
+                _extract_structured_data(brand_name, brand_pages, model),
+                _extract_structured_data(competitor_name, comp_pages, model),
+            ]
+            if ref_html:
+                extract_tasks.append(_extract_page_structure(ref_html, model))
+
+            extract_results = await asyncio.gather(*extract_tasks, return_exceptions=True)
+
+            if isinstance(extract_results[0], Exception):
+                log.error(f"[LP Extract] Brand extraction failed: {extract_results[0]}")
+                brand_data = []
+            else:
+                brand_data = extract_results[0]
+
+            if isinstance(extract_results[1], Exception):
+                log.error(f"[LP Extract] Competitor extraction failed: {extract_results[1]}")
+                comp_data = []
+            else:
+                comp_data = extract_results[1]
+            page_structure = (
+                extract_results[2] if len(extract_results) > 2 and not isinstance(extract_results[2], Exception)
+                else [
+                    {"section_type": "hero", "position": 1, "description": "Hero with headline and CTA"},
+                    {"section_type": "comparison", "position": 2, "description": "Feature comparison table"},
+                    {"section_type": "advantages", "position": 3, "description": "Key differentiators"},
+                    {"section_type": "social_proof", "position": 4, "description": "Testimonials and metrics"},
+                    {"section_type": "pricing", "position": 5, "description": "Pricing information"},
+                    {"section_type": "faq", "position": 6, "description": "Frequently asked questions"},
+                    {"section_type": "cta", "position": 7, "description": "Bottom call to action"},
+                ]
             )
-            yield _sse("stage_complete", {
-                "stage": "research",
-                "data": research,
-                "summary": research.get("summary", ""),
-            })
-        else:
-            research = {}
+        except Exception as e:
+            yield _lp_sse("error", {"message": f"Extraction failed: {str(e)}"})
+            return
 
-        # ── STAGE 2: Approach Definition ──
-        if not is_single_regen:
-            yield _sse("stage_start", {"stage": "approach", "label": "Defining strategic approach..."})
+        log.info(f"[LP Analyze] Brand data: {len(brand_data)} points, Competitor data: {len(comp_data)} points")
+        if brand_data:
+            log.info(f"[LP Analyze] Sample brand point: {brand_data[0]}")
+        if comp_data:
+            log.info(f"[LP Analyze] Sample comp point: {comp_data[0]}")
 
-            approach = await _pipeline_approach(
-                sections, hub_context, goals_context, competitor_context, research, page_type, model_to_use
-            )
-            yield _sse("stage_complete", {
-                "stage": "approach",
-                "data": approach,
-                "summary": approach.get("summary", ""),
-            })
-        else:
-            approach = {}
+        yield _lp_sse("progress", {
+            "percent": 75,
+            "message": f"Extracted {len(brand_data)} data points from {brand_name}, {len(comp_data)} from {competitor_name}"
+        })
 
-        # ── STAGE 3: Storyboard ──
-        if not is_single_regen:
-            yield _sse("stage_start", {"stage": "storyboard", "label": "Building narrative storyboard..."})
+        # Derive comparison table
+        comparison_table = _derive_comparison_table(brand_name, brand_data, competitor_name, comp_data)
+        log.info(f"[LP Analyze] Comparison table: {len(comparison_table)} rows")
 
-            storyboard = await _pipeline_storyboard(
-                sections, hub_context, goals_context, competitor_context, research, approach, page_type, model_to_use
-            )
-            yield _sse("stage_complete", {
-                "stage": "storyboard",
-                "data": storyboard,
-                "summary": storyboard.get("summary", ""),
-            })
-        else:
-            storyboard = {}
+        yield _lp_sse("progress", {"percent": 90, "message": f"Built comparison table with {len(comparison_table)} rows"})
 
-        # ── STAGE 4: Section-by-section copy generation ──
-        yield _sse("stage_start", {"stage": "copywriting", "label": "Writing final copy..."})
+        # Send structure
+        yield _lp_sse("structure", {"sections": page_structure})
 
-        storyboard_sections = storyboard.get("sections", {})
-        generated = []
+        # Send data table
+        yield _lp_sse("data_table", {"rows": comparison_table})
 
-        for i, sec in enumerate(sections):
-            pos = sec["position"]
-            yield _sse("section_progress", {
-                "position": pos,
-                "section_type": sec.get("section_type", ""),
-                "status": "generating",
-            })
-
-            try:
-                section_brief = storyboard_sections.get(str(pos), storyboard_sections.get(pos, {}))
-                new_copy = await _pipeline_write_section(
-                    sec, hub_context, goals_context, competitor_context,
-                    research, approach, section_brief, page_type, model_to_use
-                )
-                result_section = {
-                    "position": pos,
-                    "section_type": sec.get("section_type", "custom"),
-                    "current_copy": sec.get("current_copy", {}),
-                    "new_copy": new_copy,
-                }
-            except Exception as e:
-                log.error(f"Section {pos} generation failed: {e}")
-                result_section = {
-                    "position": pos,
-                    "section_type": sec.get("section_type", "custom"),
-                    "current_copy": sec.get("current_copy", {}),
-                    "new_copy": {"headline": "(generation failed)", "body": str(e)},
-                }
-
-            generated.append(result_section)
-            yield _sse("section_complete", result_section)
-
-        yield _sse("stage_complete", {"stage": "copywriting", "summary": f"{len(generated)} sections written"})
-        yield _sse("complete", {"total_sections": len(generated), "model_used": model_to_use})
+        # Done
+        yield _lp_sse("complete", {"message": "Analysis complete"})
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
-def _sse(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+# ── Generate Copy Endpoint (SSE) ──
 
+@app.post("/api/lpgen/generate")
+async def lpgen_generate_v2(request: Request):
+    """Generate landing page copy from confirmed data table and page structure."""
+    data = await request.json()
+    brand_name = data.get("brand_name", "Brand")
+    competitor_name = data.get("competitor_name", "Competitor")
+    page_structure = data.get("page_structure", [])
+    data_table = data.get("data_table", [])
+    brief = data.get("brief", "")
+    model = data.get("model") or None
 
-# ── Pipeline Stage 1: Research ──
-async def _pipeline_research(
-    sections: list, hub_context: str, goals_context: str,
-    competitor_context: str, page_type: str, model: str,
-) -> dict:
-    section_summary = "\n".join(
-        f"  {s['position']}. [{s.get('section_type','custom')}] {s.get('visual_role','')}"
-        for s in sections
+    if model:
+        set_model(model)
+
+    data_table_json = json.dumps(data_table, indent=2, ensure_ascii=False)
+    structure_text = "\n".join(
+        f"{s.get('position', i+1)}. {s.get('section_type', 'custom')} — {s.get('description', '')}"
+        for i, s in enumerate(page_structure)
     )
 
-    comparison_instruction = ""
-    if page_type == "comparison_page":
-        comparison_instruction = """
-COMPARISON PAGE RESEARCH:
-- Identify the key differentiators between the brand and the competitor.
-- Find specific areas where the brand wins (pricing, features, ease of use, speed, support).
-- Note any weaknesses the competitor has that the brand addresses.
-- Identify the competitor's strengths that need to be acknowledged or reframed.
-- Determine what a buyer comparing these two products cares about most."""
+    async def _stream():
+        yield _lp_sse("progress", {"percent": 10, "message": "Generating copy for all sections..."})
 
-    system_prompt = """You are a senior content strategist conducting research before writing a landing page. Your job is to gather and organize EVERY relevant fact, data point, and insight needed to write compelling, truthful copy.
+        system_prompt = f"""You are a senior SaaS landing page copywriter who writes for companies like 
+Vercel, Linear, Stripe, and Notion. You write with authority, precision, and restraint.
 
-Return a JSON object:
-{
-  "summary": "2-3 sentence research summary",
-  "target_buyer": "Who is this page for? What stage of the buying journey? What triggered their search?",
-  "search_intent": "What query brought them here? What do they want to achieve?",
-  "key_pain_points": ["Pain points this page must address, drawn from the knowledge hub"],
-  "value_propositions": ["Specific value props to emphasize, with supporting evidence from the hub"],
-  "proof_points_to_use": ["Specific metrics, customer counts, testimonials to cite"],
-  "competitive_angles": ["How the brand differs from alternatives — based ONLY on verified facts"],
-  "pricing_positioning": "How to position the pricing (if relevant)",
-  "risk_objections": ["Likely buyer objections and how to counter them with hub facts"],
-  "cta_strategy": "What action to drive and why it makes sense at this funnel stage",
-  "tone_direction": "Specific tone guidance based on audience and page type"
-}
+You are writing a "{competitor_name} Alternative" landing page for {brand_name}.
+Your audience: technical decision-makers evaluating alternatives to {competitor_name}.
 
-RULES:
-- EVERY insight must be grounded in the Knowledge Hub facts. No fabrication.
-- Be specific. "Great product" is useless. "50+ data sources with 95% match rate" is useful.
-- Think like a buyer, not a marketer."""
+═══ VERIFIED DATA TABLE (your ONLY source of facts) ═══
+{data_table_json}
 
-    user_prompt = f"""{goals_context}
+═══ PAGE STRUCTURE (write one section for each) ═══
+{structure_text}
 
-Page type: {page_type.replace('_', ' ')}
+{f"═══ USER BRIEF ═══{chr(10)}{brief}" if brief else ""}
 
-Sections on this page:
-{section_summary}
+═══ COPYWRITING STANDARDS ═══
 
---- KNOWLEDGE HUB (Source of Truth) ---
-{hub_context}
---- END KNOWLEDGE HUB ---
-{competitor_context}
-{comparison_instruction}
+VOICE & TONE:
+- Confident but not arrogant. State facts, let them speak.
+- Respect the competitor. Never mock or use "unlike [competitor]" framing.
+- Lead with what {brand_name} does, not what {competitor_name} doesn't.
+- Use active voice. "Pulse delivers sub-70ms latency" not "Latency is reduced by..."
 
-Conduct thorough research for this landing page. Return JSON only."""
+STRUCTURE PER SECTION:
+- Hero: One power headline (8-12 words max). One supporting line (max 2 sentences). No feature lists.
+- Comparison: Show only the 4-5 strongest metrics where {brand_name} equals or beats {competitor_name}. 
+  Both companies MUST have a real value for each row. Never show "—" for {brand_name}. 
+  Add a short subtitle under each value explaining context (e.g., "Time-to-first-byte", "Streaming P50").
+- Advantages: 4-6 cards. Each card: a punchy title (4-6 words) + one sentence of proof with a real number.
+- Social Proof: Lead with the strongest metric (e.g., "1B+ calls processed monthly"). Include real testimonials with attribution if available.
+- Use Cases: 3-6 concrete scenarios. Title + one sentence each.
+- FAQ: 4-6 real questions a buyer would ask. Answers: 2-3 sentences, factual, citing real numbers.
+- CTA: Short, action-oriented. One headline, one supporting line, clear CTA label.
+- Pricing: Lead with the value prop, then specific numbers from the data table.
+- Security/Compliance: Lead with certifications, then explain what they mean practically.
 
-    result = await llm_review(system_prompt=system_prompt, user_prompt=user_prompt, model=model, max_tokens=8192)
-    if result.get("parse_error"):
-        return {"summary": result.get("raw_response", "Research failed")[:500]}
-    return result
+FORMAT:
+- Bullet points use "- " prefix.
+- Keep body_copy under 500 characters per section (except FAQ).
+- Headlines: No periods. Title case. No generic phrases like "Why Choose" or "The Best".
 
+HARD RULES:
+1. Every metric, stat, or factual claim MUST exist in the data table above. Do NOT invent or estimate.
+2. Use "{brand_name}" and "{competitor_name}" exactly as written. Never abbreviate or substitute.
+3. If a data point exists for {brand_name} but not {competitor_name}, frame it as {brand_name}'s strength.
+4. If a data point favors {competitor_name}, acknowledge it honestly in one line — then pivot to {brand_name}'s strengths.
+5. For comparison sections, return a "comparison_rows" array. Each row needs:
+   {{"feature": "...", "brand_value": "...", "brand_context": "...", "competitor_value": "...", "competitor_context": "..."}}
+6. For FAQ sections, return body_copy as a JSON array of {{"q": "...", "a": "..."}} objects.
+7. Every section must have at least one data_points_used reference.
 
-# ── Pipeline Stage 2: Approach Definition ──
-async def _pipeline_approach(
-    sections: list, hub_context: str, goals_context: str,
-    competitor_context: str, research: dict, page_type: str, model: str,
-) -> dict:
-    comparison_instruction = ""
-    if page_type == "comparison_page":
-        comparison_instruction = """
-COMPARISON APPROACH:
-- Define whether to lead with the brand's strengths or the competitor's weaknesses.
-- Choose a framing: "alternative to X" vs "X vs Y" vs "why teams switch from X".
-- Decide on the comparison format: feature table, narrative, or advantage-led.
-- Plan how to handle areas where the competitor is objectively stronger."""
+═══ OUTPUT FORMAT ═══
+Return a JSON array. Each item:
+- section_type: matching the structure above
+- headline: string
+- subheadline: string (optional)
+- body_copy: string (bullet points with "- ") or JSON array (for FAQ)
+- comparison_rows: array (only for comparison sections)
+- data_points_used: list of data_point labels referenced"""
 
-    system_prompt = """You are a conversion strategist defining the strategic approach for a landing page. Based on research findings, define the narrative strategy.
+        try:
+            result = await llm_review(
+                system_prompt=system_prompt,
+                user_prompt="Generate all sections now. Return ONLY the JSON array.",
+                model=model,
+                max_tokens=16384,
+            )
 
-Return a JSON object:
-{
-  "summary": "2-3 sentence approach summary",
-  "positioning_statement": "The core 1-sentence positioning for this page",
-  "narrative_arc": "The emotional/logical journey: what the reader feels at the top → middle → bottom",
-  "primary_hook": "The opening angle that stops the scroll — must be specific, not generic",
-  "differentiation_strategy": "How we'll stand out from what the reader has already seen",
-  "proof_strategy": "When and how to deploy social proof, metrics, testimonials",
-  "objection_handling_plan": "Where in the page flow to address each major objection",
-  "cta_progression": "How CTAs escalate: awareness → interest → action across sections",
-  "content_density": "Light and punchy vs. detailed and comprehensive — and why",
-  "sections_strategy": {
-    "1": "Brief strategic note for section 1",
-    "2": "Brief strategic note for section 2"
-  }
-}
-
-RULES:
-- Be decisive. Pick an angle, don't hedge.
-- The approach must serve the specific page type and buyer intent.
-- Reference specific research findings to justify decisions."""
-
-    user_prompt = f"""{goals_context}
-
-Page type: {page_type.replace('_', ' ')}
-
---- RESEARCH FINDINGS ---
-{json.dumps(research, indent=2)}
---- END RESEARCH ---
-
---- KNOWLEDGE HUB ---
-{hub_context[:8000]}
---- END KNOWLEDGE HUB ---
-{competitor_context}
-{comparison_instruction}
-
-Define the strategic approach. Return JSON only."""
-
-    result = await llm_review(system_prompt=system_prompt, user_prompt=user_prompt, model=model, max_tokens=8192)
-    if result.get("parse_error"):
-        return {"summary": result.get("raw_response", "Approach definition failed")[:500]}
-    return result
-
-
-# ── Pipeline Stage 3: Storyboard ──
-async def _pipeline_storyboard(
-    sections: list, hub_context: str, goals_context: str,
-    competitor_context: str, research: dict, approach: dict,
-    page_type: str, model: str,
-) -> dict:
-    section_details = "\n".join(
-        f"  {s['position']}. [{s.get('section_type','custom')}] Role: {s.get('visual_role','')} | "
-        f"Slots: {', '.join(s.get('content_slots', []))}"
-        for s in sections
-    )
-
-    system_prompt = """You are a senior copywriter building a section-by-section storyboard — the detailed brief for each section's copy BEFORE writing it. Each section should have clear intent, specific messaging points, and a defined role in the overall narrative.
-
-Return a JSON object:
-{
-  "summary": "2-3 sentence storyboard overview",
-  "narrative_flow": "How the page reads as a story from top to bottom",
-  "sections": {
-    "1": {
-      "purpose": "What this section must accomplish in the reader's mind",
-      "messaging_points": ["Specific points to make, with data from the hub"],
-      "emotional_beat": "What the reader should feel after this section",
-      "transition_from_previous": "How this connects to the section above",
-      "copy_direction": "Specific guidance: headline angle, body approach, CTA if present",
-      "facts_to_cite": ["Specific facts/metrics from the hub to use here"],
-      "avoid": "What NOT to do in this section"
-    }
-  }
-}
-
-RULES:
-- Every section must have a distinct job. No two sections should make the same point.
-- Facts_to_cite must reference REAL data from the knowledge hub.
-- Think about the reader's scrolling journey — each section should earn the next scroll.
-- The storyboard is the blueprint. Be specific enough that a junior copywriter could execute it."""
-
-    user_prompt = f"""{goals_context}
-
-Page type: {page_type.replace('_', ' ')}
-
---- RESEARCH ---
-{json.dumps(research, indent=2)[:4000]}
---- END RESEARCH ---
-
---- STRATEGIC APPROACH ---
-{json.dumps(approach, indent=2)[:4000]}
---- END APPROACH ---
-
-Sections to storyboard:
-{section_details}
-
---- KNOWLEDGE HUB ---
-{hub_context[:6000]}
---- END KNOWLEDGE HUB ---
-{competitor_context[:4000] if competitor_context else ''}
-
-Build the section-by-section storyboard. Return JSON only."""
-
-    result = await llm_review(system_prompt=system_prompt, user_prompt=user_prompt, model=model, max_tokens=12000)
-    if result.get("parse_error"):
-        return {"summary": result.get("raw_response", "Storyboard failed")[:500], "sections": {}}
-    return result
-
-
-# ── Pipeline Stage 4: Write individual section copy ──
-async def _pipeline_write_section(
-    section: dict, hub_context: str, goals_context: str,
-    competitor_context: str, research: dict, approach: dict,
-    section_brief: dict, page_type: str, model: str,
-) -> dict:
-    current = section.get("current_copy", {})
-    section_type = section.get("section_type", "custom")
-    visual_role = section.get("visual_role", "")
-    slots = section.get("content_slots", [])
-    current_copy_text = json.dumps(current, indent=2) if current else "(empty)"
-
-    brief_block = ""
-    if section_brief:
-        brief_block = f"""
---- STORYBOARD BRIEF FOR THIS SECTION ---
-Purpose: {section_brief.get('purpose', '')}
-Messaging points: {json.dumps(section_brief.get('messaging_points', []))}
-Emotional beat: {section_brief.get('emotional_beat', '')}
-Copy direction: {section_brief.get('copy_direction', '')}
-Facts to cite: {json.dumps(section_brief.get('facts_to_cite', []))}
-Avoid: {section_brief.get('avoid', '')}
---- END BRIEF ---"""
-
-    approach_summary = ""
-    if approach:
-        approach_summary = f"""
-Positioning: {approach.get('positioning_statement', '')}
-Narrative arc: {approach.get('narrative_arc', '')}
-Primary hook: {approach.get('primary_hook', '')}
-Tone: {approach.get('content_density', '')}"""
-
-    comparison_rule = ""
-    if page_type == "comparison_page":
-        comparison_rule = """
-COMPARISON COPY RULES:
-- State facts about both products accurately. Do NOT invent competitor weaknesses.
-- Lead with the brand's genuine strengths, don't bash the competitor.
-- Use specific numbers, not vague claims ("starts at $49/mo" not "affordable pricing").
-- If you don't have a verified fact, don't mention it."""
-
-    system_prompt = f"""You are an elite conversion copywriter. You are writing ONE section of a landing page. You have been given a detailed storyboard brief — follow it precisely.
-
-{goals_context}
-
-STRATEGIC CONTEXT:
-{approach_summary}
-
-WRITING RULES:
-1. Use ONLY facts from the Knowledge Hub. Zero fabrication.
-2. Follow the storyboard brief for this section — it defines what to say and how.
-3. Match the structural density of the reference copy (same number of content slots).
-4. Write for conversion: specific, concrete, benefit-driven.
-5. No filler phrases. No AI clichés ("revolutionize", "leverage", "empower", "seamless", "cutting-edge"). No emojis.
-6. Every sentence must earn its place — if it doesn't advance the sale, cut it.
-{comparison_rule}
-
---- KNOWLEDGE HUB ---
-{hub_context[:10000]}
---- END KNOWLEDGE HUB ---
-{competitor_context[:6000] if competitor_context else ''}"""
-
-    user_prompt = f"""Write copy for this section:
-
-Section type: {section_type}
-Visual role: {visual_role}
-Content slots: {', '.join(slots) if slots else 'headline, body'}
-{brief_block}
-
-Reference copy (match this structure):
-{current_copy_text}
-
-Return a JSON object with the new copy. Include ONLY the keys that have content:
-{{
-  "headline": "New headline text",
-  "subheadline": "New subheadline if applicable",
-  "body": "New body paragraph if applicable",
-  "cta_text": "New CTA button text if applicable",
-  "list_items": ["New list items if applicable"]
-}}
-
-Return ONLY the JSON, no other text."""
-
-    result = await llm_review(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        model=model,
-        temperature=0.4,
-    )
-
-    if result.get("parse_error"):
-        raw = result.get("raw_response", "")
-        return {"headline": raw[:200] if raw else "(parse error)", "body": ""}
-
-    return result
-
-
-def _format_knowledge_hub_for_prompt(hub: dict) -> str:
-    """Format knowledge hub data into a prompt-friendly string."""
-    parts = []
-    if hub.get("company_name"):
-        parts.append(f"Company: {hub['company_name']}")
-    if hub.get("product_name"):
-        parts.append(f"Product: {hub['product_name']}")
-    if hub.get("product_description"):
-        parts.append(f"Description: {hub['product_description']}")
-
-    if hub.get("features"):
-        parts.append("\nFeatures:")
-        for f in hub["features"]:
-            name = f.get("name", "") if isinstance(f, dict) else str(f)
-            desc = f.get("description", "") if isinstance(f, dict) else ""
-            parts.append(f"  - {name}: {desc}" if desc else f"  - {name}")
-
-    if hub.get("pricing"):
-        parts.append("\nPricing:")
-        for p in hub["pricing"]:
-            tier = p.get("tier", "") if isinstance(p, dict) else str(p)
-            price = p.get("price", "") if isinstance(p, dict) else ""
-            details = p.get("details", "") if isinstance(p, dict) else ""
-            parts.append(f"  - {tier}: {price} ({details})" if details else f"  - {tier}: {price}")
-
-    if hub.get("proof_points"):
-        parts.append("\nProof Points:")
-        for pp in hub["proof_points"]:
-            parts.append(f"  - {pp}")
-
-    if hub.get("integrations"):
-        parts.append(f"\nIntegrations: {', '.join(hub['integrations'])}")
-
-    if hub.get("use_cases"):
-        parts.append("\nUse Cases:")
-        for uc in hub["use_cases"]:
-            title = uc.get("title", "") if isinstance(uc, dict) else str(uc)
-            desc = uc.get("description", "") if isinstance(uc, dict) else ""
-            parts.append(f"  - {title}: {desc}" if desc else f"  - {title}")
-
-    if hub.get("testimonials"):
-        parts.append("\nTestimonials:")
-        for t in hub["testimonials"]:
-            if isinstance(t, dict):
-                parts.append(f'  - "{t.get("quote", "")}" — {t.get("author", "")}, {t.get("role", "")}')
+            if isinstance(result, list):
+                sections = result
+            elif isinstance(result, dict):
+                if result.get("parse_error"):
+                    raw = result.get("raw_response", "")
+                    repaired = _repair_truncated_json(raw)
+                    if repaired:
+                        sections = repaired
+                    else:
+                        yield _lp_sse("error", {"message": "Failed to parse LLM response"})
+                        return
+                else:
+                    sections = []
+                    for key in result:
+                        val = result[key]
+                        if isinstance(val, list) and len(val) > 0:
+                            sections = val
+                            break
             else:
-                parts.append(f"  - {t}")
+                yield _lp_sse("error", {"message": "Unexpected response format"})
+                return
 
-    if hub.get("cta_patterns"):
-        parts.append(f"\nCTA Patterns: {', '.join(hub['cta_patterns'])}")
+            for i, sec in enumerate(sections):
+                yield _lp_sse("section_complete", sec)
+                yield _lp_sse("progress", {
+                    "percent": 20 + int(70 * (i + 1) / max(len(sections), 1)),
+                    "message": f"Section {i+1}/{len(sections)}: {sec.get('section_type', 'section')} complete"
+                })
 
-    if hub.get("tone_observations"):
-        parts.append(f"\nTone: {hub['tone_observations']}")
+            yield _lp_sse("complete", {"sections": sections})
 
-    return "\n".join(parts)
+        except Exception as e:
+            yield _lp_sse("error", {"message": f"Generation failed: {str(e)}"})
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
-def _format_goals_for_prompt(goals: dict) -> str:
-    """Format generation goals into prompt instructions."""
-    parts = []
-    if goals.get("page_type"):
-        parts.append(f"Page type: {goals['page_type'].replace('_', ' ')}")
-    if goals.get("target_audience"):
-        parts.append(f"Target audience: {goals['target_audience']}")
-    if goals.get("tone"):
-        parts.append(f"Tone: {goals['tone'].replace('_', ' ')}")
-    if goals.get("primary_cta_text"):
-        parts.append(f"Primary CTA: {goals['primary_cta_text']}")
-    if goals.get("primary_cta_url"):
-        parts.append(f"CTA URL: {goals['primary_cta_url']}")
-    if goals.get("secondary_cta_text"):
-        parts.append(f"Secondary CTA: {goals['secondary_cta_text']}")
-    if goals.get("custom_instructions"):
-        parts.append(f"Custom instructions: {goals['custom_instructions']}")
-    return "GENERATION GOALS:\n" + "\n".join(parts) if parts else ""
+# ── Refine Section Endpoint ──
 
+@app.post("/api/lpgen/refine-section")
+async def lpgen_refine_section(request: Request):
+    """Refine a single section using AI with full page context."""
+    data = await request.json()
+    section = data.get("section", {})
+    instruction = data.get("instruction", "")
+    all_data_points = data.get("all_data_points", [])
+    all_sections = data.get("all_sections", [])
+    brief = data.get("brief", "")
+    brand_name = data.get("brand_name", "Brand")
+    competitor_name = data.get("competitor_name", "Competitor")
+    model = data.get("model") or None
+
+    if model:
+        set_model(model)
+
+    section_json = json.dumps(section, indent=2, ensure_ascii=False)
+    data_json = json.dumps(all_data_points, indent=2, ensure_ascii=False)
+
+    page_outline = "\n".join(
+        f"  {'→' if s.get('is_current') else ' '} {s.get('index', i)+1}. [{s.get('section_type', '?')}] {s.get('headline', '')}"
+        for i, s in enumerate(all_sections)
+    )
+
+    try:
+        result = await llm_review(
+            system_prompt=f"""You are a senior SaaS landing page copywriter refining a section of a 
+"{competitor_name} Alternative" landing page for {brand_name}.
+
+PAGE CONTEXT:
+{f'Brief: {brief}' if brief else 'No specific brief provided.'}
+
+Page structure (→ marks the section you are refining):
+{page_outline}
+
+CURRENT SECTION TO REFINE:
+{section_json}
+
+ALL VERIFIED DATA POINTS (from {brand_name} and {competitor_name} websites):
+{data_json[:30000]}
+
+RULES:
+- You may use ANY data point from the full data set above — not just those currently tagged to this section.
+- Only use facts from the verified data points. Do not invent metrics or claims.
+- Always use "{brand_name}" and "{competitor_name}" exactly as written.
+- Keep the section consistent with the overall page flow and other sections.
+- Return the refined section as a JSON object with the same fields:
+  section_type, headline, subheadline, body_copy, comparison_rows (if applicable), data_points_used.
+- Update data_points_used to reflect any new data points you referenced.
+""",
+            user_prompt=f"User instruction: {instruction}\n\nRefine the section accordingly. Return ONLY valid JSON.",
+            model=model,
+            max_tokens=8192,
+        )
+    except Exception as e:
+        log.error(f"[LP Refine] LLM call failed: {e}")
+        return JSONResponse({"error": f"LLM call failed: {str(e)}"}, status_code=500)
+
+    if isinstance(result, dict):
+        if result.get("parse_error"):
+            return JSONResponse({"error": "Failed to parse refined section"}, status_code=500)
+        return JSONResponse(result)
+    elif isinstance(result, list) and len(result) > 0:
+        return JSONResponse(result[0])
+    else:
+        return JSONResponse({"error": "Unexpected response format"}, status_code=500)
+
+
+# ── Preview HTML ──
 
 @app.post("/api/lpgen/preview-html")
 async def lpgen_preview_html(request: Request):
     """Render generated copy as a preview HTML page."""
     data = await request.json()
     sections = data.get("sections", [])
-    company_name = data.get("company_name", "Company")
-    cta_url = data.get("cta_url", "#")
-    page_type = data.get("page_type", "landing_page")
+    brand_name = data.get("brand_name", data.get("company_name", "Company"))
+    competitor_name = data.get("competitor_name", "Competitor")
 
-    html = _render_preview_html(sections, company_name, cta_url, page_type)
+    html = _render_preview_html_v2(sections, brand_name, competitor_name)
     return Response(content=html, media_type="text/html")
 
 
-def _render_preview_html(sections: list, company_name: str, cta_url: str, page_type: str) -> str:
-    """Build a self-contained preview HTML page from generated sections."""
-    accent = "#6c5ce7"
+def _h(text: str) -> str:
+    """HTML-escape helper."""
+    if not text:
+        return ""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
-    section_html_parts = []
+
+def _render_preview_html_v2(sections: list, brand_name: str, competitor_name: str) -> str:
+    """Build production-quality preview HTML matching the assemblyai-alternative gold standard."""
+
+    section_parts = []
     for sec in sections:
-        nc = sec.get("new_copy", {})
         stype = sec.get("section_type", "custom")
-        headline = nc.get("headline", "")
-        subheadline = nc.get("subheadline", "")
-        body = nc.get("body", "")
-        cta_text = nc.get("cta_text", "")
-        items = nc.get("list_items", [])
+        headline = sec.get("headline", "")
+        subheadline = sec.get("subheadline", "")
+        body = sec.get("body_copy", "")
+        comp_rows = sec.get("comparison_rows", [])
 
         if stype == "hero":
-            section_html_parts.append(f"""
-    <section style="padding:100px 40px 80px;text-align:center;background:linear-gradient(135deg,#0a0a1a 0%,#1a1a3e 100%);">
-      <h1 style="font-size:clamp(32px,5vw,56px);font-weight:700;margin-bottom:16px;line-height:1.15;">{_h(headline)}</h1>
-      {f'<p style="font-size:20px;color:rgba(255,255,255,0.7);max-width:640px;margin:0 auto 32px;line-height:1.6;">{_h(subheadline)}</p>' if subheadline else ''}
-      {f'<p style="font-size:16px;color:rgba(255,255,255,0.6);max-width:560px;margin:0 auto 36px;line-height:1.7;">{_h(body)}</p>' if body else ''}
-      {f'<a href="{_h(cta_url)}" style="display:inline-block;padding:16px 40px;background:{accent};color:#fff;border-radius:8px;font-weight:600;font-size:16px;text-decoration:none;">{_h(cta_text)}</a>' if cta_text else ''}
+            section_parts.append(f"""
+    <section class="hero">
+      <div class="container">
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <p class="label eyebrow">{_h(competitor_name)} Alternative</p>
+            <h1 class="h-display">{_h(headline)}</h1>
+            {f'<p class="body-light" style="max-width:640px;">{_h(subheadline)}</p>' if subheadline else ''}
+          </div>
+          <div class="hero-actions">
+            <a class="btn btn-accent" href="#">Start Building Free</a>
+            <a class="btn btn-ghost" href="#">Book a Demo</a>
+          </div>
+          {f'<p class="small-text" style="color:rgba(255,255,255,.45);margin-top:4px;">{_h(body)}</p>' if body and isinstance(body, str) and len(body) < 120 else ''}
+        </div>
+      </div>
     </section>""")
 
-        elif stype in ("features", "how_it_works", "integrations"):
+        elif stype == "comparison" and comp_rows:
+            rows_html = ""
+            for row in comp_rows:
+                if not isinstance(row, dict):
+                    continue
+                feature = row.get("feature", row.get("label", row.get("metric", "")))
+                bv = row.get("brand_value", row.get("brand", ""))
+                cv = row.get("competitor_value", row.get("competitor", ""))
+                bc = row.get("brand_context", "")
+                cc = row.get("competitor_context", "")
+                if not bv and not cv:
+                    continue
+                rows_html += f"""
+                <div class="vs-metric-row">
+                  <div class="vs-val vs-val-left">
+                    <p class="vs-val-num win">{_h(bv) if bv else '&mdash;'}</p>
+                    {f'<p class="vs-val-sub">{_h(bc)}</p>' if bc else ''}
+                  </div>
+                  <div class="vs-metric-label"><span>{_h(feature)}</span></div>
+                  <div class="vs-val">
+                    <p class="vs-val-num">{_h(cv) if cv else '&mdash;'}</p>
+                    {f'<p class="vs-val-sub">{_h(cc)}</p>' if cc else ''}
+                  </div>
+                </div>"""
+            section_parts.append(f"""
+    <section class="section" id="comparison">
+      <div class="container">
+        <div class="section-head center">
+          <p class="label eyebrow-dark">Head-to-head comparison</p>
+          {f'<h2 class="h-section">{_h(headline)}</h2>' if headline else ''}
+          {f'<p class="body-dark" style="max-width:580px;">{_h(subheadline)}</p>' if subheadline else ''}
+        </div>
+        <div class="vs-card">
+          <div class="vs-card-header">
+            <div class="vs-brand-col vs-brand-left"><span class="vs-brand-name">{_h(brand_name)}</span></div>
+            <div class="vs-badge"><span>VS</span></div>
+            <div class="vs-brand-col vs-brand-right"><span class="vs-brand-name">{_h(competitor_name)}</span></div>
+          </div>
+          <div class="vs-metrics">{rows_html}</div>
+        </div>
+        <p class="vs-note">All data sourced from each company's published website.</p>
+      </div>
+    </section>""")
+
+        elif stype in ("advantages", "features"):
+            body_items = _parse_bullet_list(body)
             items_html = ""
-            if items:
-                items_html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:24px;margin-top:32px;">'
-                for item in items:
-                    items_html += f'<div style="padding:24px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;"><p style="font-size:15px;line-height:1.6;">{_h(item)}</p></div>'
+            if body_items:
+                items_html = '<div class="advantage-grid">'
+                for item in body_items:
+                    parts = item.split("—", 1) if "—" in item else item.split(" – ", 1) if " – " in item else [item]
+                    title = parts[0].strip()
+                    desc = parts[1].strip() if len(parts) > 1 else ""
+                    items_html += f"""<div class="advantage-card">
+              <h3 class="advantage-title">{_h(title)}</h3>
+              {f'<p class="body-dark" style="font-size:14px;">{_h(desc)}</p>' if desc else ''}
+            </div>"""
                 items_html += '</div>'
 
-            section_html_parts.append(f"""
-    <section style="padding:80px 40px;max-width:1100px;margin:0 auto;">
-      {f'<h2 style="font-size:36px;font-weight:700;text-align:center;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
-      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);text-align:center;max-width:600px;margin:0 auto 16px;">{_h(subheadline)}</p>' if subheadline else ''}
-      {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);text-align:center;max-width:560px;margin:0 auto;">{_h(body)}</p>' if body else ''}
-      {items_html}
+            section_parts.append(f"""
+    <section class="section section-subtle">
+      <div class="container">
+        <div class="section-head center">
+          <p class="label eyebrow-dark">{_h(brand_name)} advantage</p>
+          {f'<h2 class="h-section">{_h(headline)}</h2>' if headline else ''}
+          {f'<p class="body-dark" style="max-width:620px;">{_h(subheadline)}</p>' if subheadline else ''}
+        </div>
+        {items_html if items_html else f'<p class="body-dark" style="text-align:center;">{_h(body)}</p>'}
+      </div>
     </section>""")
 
-        elif stype in ("social_proof", "testimonials", "stats"):
-            section_html_parts.append(f"""
-    <section style="padding:60px 40px;background:rgba(108,92,231,0.04);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);">
-      <div style="max-width:1100px;margin:0 auto;text-align:center;">
-        {f'<h2 style="font-size:32px;font-weight:700;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
-        {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);max-width:560px;margin:0 auto 24px;">{_h(subheadline)}</p>' if subheadline else ''}
-        {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.7;max-width:600px;margin:0 auto;">{_h(body)}</p>' if body else ''}
+        elif stype == "products":
+            body_items = _parse_bullet_list(body)
+            cards_html = ""
+            if body_items:
+                cards_html = '<div class="grid-3">'
+                for item in body_items:
+                    parts = item.split("—", 1) if "—" in item else item.split(" – ", 1) if " – " in item else [item]
+                    title = parts[0].strip()
+                    desc = parts[1].strip() if len(parts) > 1 else ""
+                    cards_html += f"""<div class="product-card">
+              <h3 class="h-card">{_h(title)}</h3>
+              {f'<p class="body-dark">{_h(desc)}</p>' if desc else ''}
+            </div>"""
+                cards_html += '</div>'
+
+            section_parts.append(f"""
+    <section class="section section-dark">
+      <div class="container">
+        <div class="section-head">
+          <p class="label eyebrow">The platform</p>
+          {f'<h2 class="h-section" style="color:#fff;">{_h(headline)}</h2>' if headline else ''}
+          {f'<p class="body-light">{_h(subheadline)}</p>' if subheadline else ''}
+        </div>
+        {cards_html}
+      </div>
+    </section>""")
+
+        elif stype in ("use_cases", "use-cases"):
+            body_items = _parse_bullet_list(body)
+            items_html = ""
+            if body_items:
+                items_html = '<div class="grid-3">'
+                for item in body_items:
+                    parts = item.split("—", 1) if "—" in item else item.split(" – ", 1) if " – " in item else [item]
+                    title = parts[0].strip()
+                    desc = parts[1].strip() if len(parts) > 1 else ""
+                    items_html += f"""<div class="use-case-item">
+              <span class="use-case-dot"></span>
+              <div>
+                <h3 style="font-size:16px;font-weight:600;margin:0 0 4px;">{_h(title)}</h3>
+                {f'<p class="body-dark" style="font-size:14px;">{_h(desc)}</p>' if desc else ''}
+              </div>
+            </div>"""
+                items_html += '</div>'
+
+            section_parts.append(f"""
+    <section class="section">
+      <div class="container">
+        <div class="section-head center">
+          <p class="label eyebrow-dark">Use cases</p>
+          {f'<h2 class="h-section">{_h(headline)}</h2>' if headline else ''}
+          {f'<p class="body-dark" style="max-width:660px;">{_h(subheadline)}</p>' if subheadline else ''}
+        </div>
+        {items_html}
+      </div>
+    </section>""")
+
+        elif stype == "social_proof":
+            body_items = _parse_bullet_list(body)
+            proof_html = ""
+            if body_items:
+                proof_html = '<div class="grid-3">'
+                for item in body_items:
+                    if '"' in item or "\u201c" in item:
+                        parts = item.rsplit("—", 1) if "—" in item else item.rsplit(" – ", 1) if " – " in item else [item]
+                        quote_text = parts[0].strip().strip('""\u201c\u201d')
+                        attr = parts[1].strip() if len(parts) > 1 else ""
+                        proof_html += f"""<div class="testimonial-card">
+                  <p class="testimonial-quote">{_h(quote_text)}</p>
+                  {f'<div class="testimonial-attr"><p class="testimonial-name">{_h(attr)}</p></div>' if attr else ''}
+                </div>"""
+                    else:
+                        proof_html += f"""<div class="metric-card">
+                  <p class="body-dark" style="font-size:14px;">{_h(item)}</p>
+                </div>"""
+                proof_html += '</div>'
+            else:
+                proof_html = f'<p class="body-dark" style="text-align:center;">{_h(body)}</p>'
+
+            section_parts.append(f"""
+    <section class="section section-subtle">
+      <div class="container">
+        <div class="section-head center">
+          <p class="label eyebrow-dark">Trusted in production</p>
+          {f'<h2 class="h-section">{_h(headline)}</h2>' if headline else ''}
+          {f'<p class="body-dark">{_h(subheadline)}</p>' if subheadline else ''}
+        </div>
+        {proof_html}
+      </div>
+    </section>""")
+
+        elif stype == "faq":
+            faq_html = ""
+            faq_items = []
+            if isinstance(body, str):
+                try:
+                    faq_items = json.loads(body)
+                except (json.JSONDecodeError, TypeError):
+                    faq_items = []
+            elif isinstance(body, list):
+                faq_items = body
+
+            for i, faq in enumerate(faq_items):
+                if not isinstance(faq, dict):
+                    continue
+                q = faq.get("q", faq.get("question", ""))
+                a = faq.get("a", faq.get("answer", ""))
+                open_cls = " open" if i == 0 else ""
+                faq_html += f"""
+              <article class="faq-item{open_cls}">
+                <div class="faq-question" onclick="this.parentElement.classList.toggle('open')">
+                  <h3 style="font-size:17px;font-weight:600;margin:0;flex:1;">{_h(q)}</h3>
+                  <span class="faq-toggle">+</span>
+                </div>
+                <div class="faq-answer"><div class="faq-answer-inner"><p class="body-dark">{_h(a)}</p></div></div>
+              </article>"""
+
+            section_parts.append(f"""
+    <section class="section section-subtle">
+      <div class="container">
+        <div class="section-head center">
+          <p class="label eyebrow-dark">FAQ</p>
+          {f'<h2 class="h-section">{_h(headline)}</h2>' if headline else ''}
+        </div>
+        <div class="faq-list" style="margin:0 auto;">{faq_html}</div>
       </div>
     </section>""")
 
         elif stype == "cta":
-            section_html_parts.append(f"""
-    <section style="padding:80px 40px;text-align:center;background:linear-gradient(135deg,rgba(108,92,231,0.12) 0%,rgba(108,92,231,0.04) 100%);">
-      {f'<h2 style="font-size:36px;font-weight:700;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
-      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);max-width:500px;margin:0 auto 32px;">{_h(subheadline)}</p>' if subheadline else ''}
-      {f'<a href="{_h(cta_url)}" style="display:inline-block;padding:16px 40px;background:{accent};color:#fff;border-radius:8px;font-weight:600;font-size:16px;text-decoration:none;">{_h(cta_text)}</a>' if cta_text else ''}
-    </section>""")
-
-        elif stype == "faq":
-            items_html = ""
-            if items:
-                for item in items:
-                    items_html += f'<div style="padding:16px 0;border-bottom:1px solid rgba(255,255,255,0.08);"><p style="font-size:15px;line-height:1.6;">{_h(item)}</p></div>'
-
-            section_html_parts.append(f"""
-    <section style="padding:80px 40px;max-width:800px;margin:0 auto;">
-      {f'<h2 style="font-size:32px;font-weight:700;text-align:center;margin-bottom:32px;">{_h(headline)}</h2>' if headline else ''}
-      {f'<p style="font-size:16px;color:rgba(255,255,255,0.6);text-align:center;margin-bottom:32px;">{_h(body)}</p>' if body else ''}
-      {items_html}
+            section_parts.append(f"""
+    <section class="section">
+      <div class="container">
+        <div class="cta-panel">
+          <div style="position:relative;z-index:2;">
+            {f'<h2 class="h-section" style="color:#fff;">{_h(headline)}</h2>' if headline else ''}
+            {f'<p class="body-light" style="max-width:540px;margin-top:16px;">{_h(subheadline)}</p>' if subheadline else ''}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px;align-items:flex-start;position:relative;z-index:2;">
+            <a class="btn btn-accent" href="#">Start Building Free</a>
+            <a class="btn btn-ghost" href="#">Book a Demo</a>
+          </div>
+        </div>
+      </div>
     </section>""")
 
         elif stype == "pricing":
-            section_html_parts.append(f"""
-    <section style="padding:80px 40px;max-width:1100px;margin:0 auto;text-align:center;">
-      {f'<h2 style="font-size:36px;font-weight:700;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
-      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);max-width:500px;margin:0 auto 32px;">{_h(subheadline)}</p>' if subheadline else ''}
-      {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.7;">{_h(body)}</p>' if body else ''}
+            body_items = _parse_bullet_list(body)
+            items_html = ""
+            if body_items:
+                items_html = '<ul class="bullet-list">'
+                for item in body_items:
+                    items_html += f'<li>{_h(item)}</li>'
+                items_html += '</ul>'
+
+            section_parts.append(f"""
+    <section class="section">
+      <div class="container">
+        <div class="section-head center">
+          <p class="label eyebrow-dark">Pricing</p>
+          {f'<h2 class="h-section">{_h(headline)}</h2>' if headline else ''}
+          {f'<p class="body-dark" style="max-width:620px;">{_h(subheadline)}</p>' if subheadline else ''}
+        </div>
+        <div style="max-width:560px;margin:0 auto;">
+          <div class="card-light">{items_html}</div>
+        </div>
+      </div>
     </section>""")
 
-        elif stype == "comparison":
-            section_html_parts.append(f"""
-    <section style="padding:80px 40px;max-width:1100px;margin:0 auto;">
-      {f'<h2 style="font-size:36px;font-weight:700;text-align:center;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
-      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);text-align:center;max-width:600px;margin:0 auto 24px;">{_h(subheadline)}</p>' if subheadline else ''}
-      {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.7;max-width:700px;margin:0 auto;">{_h(body)}</p>' if body else ''}
+        elif stype in ("security", "compliance"):
+            body_items = _parse_bullet_list(body)
+            badges_html = ""
+            if body_items:
+                badges_html = '<div class="compliance-row">'
+                for item in body_items:
+                    badges_html += f'<span class="compliance-badge">{_h(item)}</span>'
+                badges_html += '</div>'
+
+            section_parts.append(f"""
+    <section class="section section-dark">
+      <div class="container">
+        <div class="section-head">
+          <p class="label eyebrow">Security & compliance</p>
+          {f'<h2 class="h-section" style="color:#fff;">{_h(headline)}</h2>' if headline else ''}
+          {f'<p class="body-light">{_h(subheadline)}</p>' if subheadline else ''}
+        </div>
+        {badges_html}
+      </div>
     </section>""")
 
         else:
-            section_html_parts.append(f"""
-    <section style="padding:60px 40px;max-width:1100px;margin:0 auto;">
-      {f'<h2 style="font-size:32px;font-weight:700;margin-bottom:12px;">{_h(headline)}</h2>' if headline else ''}
-      {f'<p style="font-size:18px;color:rgba(255,255,255,0.6);margin-bottom:16px;">{_h(subheadline)}</p>' if subheadline else ''}
-      {f'<p style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.7;">{_h(body)}</p>' if body else ''}
-      {f'<a href="{_h(cta_url)}" style="display:inline-block;margin-top:24px;padding:12px 32px;background:{accent};color:#fff;border-radius:8px;font-weight:600;text-decoration:none;">{_h(cta_text)}</a>' if cta_text else ''}
+            body_items = _parse_bullet_list(body)
+            content_html = ""
+            if body_items and len(body_items) > 1:
+                content_html = '<ul class="bullet-list">'
+                for item in body_items:
+                    content_html += f'<li>{_h(item)}</li>'
+                content_html += '</ul>'
+            elif body and isinstance(body, str):
+                content_html = f'<p class="body-dark">{_h(body)}</p>'
+
+            section_parts.append(f"""
+    <section class="section">
+      <div class="container" style="max-width:900px;">
+        <div class="section-head center">
+          {f'<h2 class="h-section">{_h(headline)}</h2>' if headline else ''}
+          {f'<p class="body-dark" style="max-width:620px;">{_h(subheadline)}</p>' if subheadline else ''}
+        </div>
+        {content_html}
+      </div>
     </section>""")
 
-    all_sections = "\n".join(section_html_parts)
+    all_sections = "\n".join(section_parts)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{_h(company_name)} — Landing Page Preview</title>
+<title>Best {_h(competitor_name)} Alternative — {_h(brand_name)}</title>
+<meta name="description" content="Looking for a {_h(competitor_name)} alternative? {_h(brand_name)} delivers a production-ready solution. Compare features, pricing, and capabilities.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-* {{ margin: 0; padding: 0; box-sizing: border-box; }}
-body {{ background: #0a0a14; color: #e4e4ed; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; line-height: 1.6; }}
-a {{ color: inherit; }}
-.preview-banner {{ position: fixed; top: 0; left: 0; right: 0; z-index: 999; background: {accent}; color: #fff; text-align: center; padding: 8px 16px; font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 16px; }}
-.preview-banner a {{ color: #fff; text-decoration: underline; }}
-main {{ margin-top: 44px; }}
+:root {{
+  --accent: #1be2b3; --accent-hover: #26ffed; --dark: #191919;
+  --body-muted: rgba(25,25,25,.76); --body-light: rgba(255,255,255,.7);
+  --gray-mid: #6f6f6f; --border-light: rgba(25,25,25,.12);
+  --accent-subtle: rgba(27,226,179,.12); --accent-border: rgba(27,226,179,.36);
+  --green-muted: #33b8a0;
+}}
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+html {{ scroll-behavior: smooth; }}
+body {{ background: #fff; color: var(--dark); font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }}
+a {{ color: inherit; text-decoration: none; }}
+.container {{ width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 80px; }}
+.section {{ padding: 112px 0; }}
+.section-subtle {{ background: #f9f9f9; }}
+.section-dark {{ background: var(--dark); color: #fff; position: relative; overflow: hidden; }}
+.h-display {{ font-size: clamp(38px,5vw,60px); line-height: 1.08; font-weight: 700; letter-spacing: -.03em; }}
+.h-section {{ font-size: clamp(28px,3.5vw,42px); line-height: 1.14; font-weight: 700; letter-spacing: -.02em; }}
+.h-card {{ font-size: 22px; line-height: 1.2; font-weight: 600; letter-spacing: -.01em; }}
+.body-dark {{ font-size: 16px; line-height: 1.6; color: var(--body-muted); }}
+.body-light {{ font-size: 16px; line-height: 1.55; color: var(--body-light); }}
+.label {{ font-size: 12px; line-height: 1.5; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; }}
+.small-text {{ font-size: 13px; line-height: 1.5; }}
+.eyebrow {{ display: inline-flex; align-items: center; gap: 10px; color: #fff; opacity: .92; }}
+.eyebrow::before {{ content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 18px rgba(27,226,179,.65); }}
+.eyebrow-dark {{ display: inline-flex; align-items: center; gap: 10px; color: var(--dark); opacity: .92; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }}
+.eyebrow-dark::before {{ content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 14px rgba(27,226,179,.4); }}
+.section-head {{ max-width: 760px; display: flex; flex-direction: column; gap: 16px; margin-bottom: 56px; }}
+.section-head.center {{ text-align: center; align-items: center; margin-left: auto; margin-right: auto; }}
+.btn {{ display: inline-flex; align-items: center; justify-content: center; gap: 10px; border-radius: 8px; font-size: 14px; font-weight: 600; padding: 14px 28px; cursor: pointer; border: none; text-decoration: none; transition: all .18s ease; font-family: inherit; }}
+.btn:hover {{ transform: translateY(-1px); }}
+.btn-accent {{ background: var(--accent); color: var(--dark); }}
+.btn-accent:hover {{ background: var(--accent-hover); box-shadow: 0 4px 24px rgba(27,226,179,.35); }}
+.btn-ghost {{ background: transparent; border: 1px solid rgba(255,255,255,.2); color: #fff; font-weight: 500; }}
+.btn-ghost:hover {{ border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.05); }}
+.btn-outline-dark {{ background: transparent; border: 1px solid var(--border-light); color: var(--dark); font-weight: 500; }}
+.btn-outline-dark:hover {{ border-color: var(--accent-border); background: var(--accent-subtle); }}
+
+.hero {{ background: var(--dark); color: #fff; padding: 160px 0 100px; position: relative; overflow: hidden; }}
+.hero::before {{ content: ""; position: absolute; width: 895px; height: 581px; left: 50%; top: 180px; transform: translateX(-5%); border-radius: 999px; filter: blur(170px); background: linear-gradient(180deg, #1be1b3 0%, #275f52 100%); opacity: .62; pointer-events: none; }}
+.hero::after {{ content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 15% 20%, rgba(255,255,255,.06), transparent 24%), linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,0) 26%); pointer-events: none; }}
+.hero-inner {{ position: relative; z-index: 2; max-width: 800px; margin: 0 auto; text-align: center; display: flex; flex-direction: column; gap: 24px; }}
+.hero-copy {{ display: flex; flex-direction: column; gap: 16px; align-items: center; }}
+.hero-actions {{ display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }}
+
+.grid-3 {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }}
+.grid-2 {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }}
+
+.vs-card {{ max-width: 880px; margin: 0 auto; border-radius: 24px; overflow: hidden; box-shadow: 0 12px 56px rgba(0,0,0,.10), 0 2px 6px rgba(0,0,0,.04); border: 1px solid rgba(25,25,25,.06); }}
+.vs-card-header {{ display: grid; grid-template-columns: 1fr 56px 1fr; align-items: stretch; }}
+.vs-brand-col {{ display: flex; align-items: center; justify-content: center; gap: 14px; padding: 28px 32px; }}
+.vs-brand-name {{ font-size: 20px; font-weight: 700; letter-spacing: -.02em; }}
+.vs-brand-left {{ background: var(--dark); color: #fff; }}
+.vs-brand-right {{ background: #f5f5f5; color: var(--dark); }}
+.vs-badge {{ display: flex; align-items: center; justify-content: center; background: #fff; position: relative; z-index: 3; }}
+.vs-badge span {{ width: 48px; height: 48px; border-radius: 999px; background: #fff; border: 2px solid rgba(25,25,25,.08); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800; color: var(--dark); box-shadow: 0 2px 12px rgba(0,0,0,.06); letter-spacing: -.02em; }}
+.vs-metrics {{ background: #fff; }}
+.vs-metric-row {{ display: grid; grid-template-columns: 1fr 120px 1fr; align-items: center; border-top: 1px solid rgba(25,25,25,.06); }}
+.vs-val {{ padding: 28px 32px; text-align: center; }}
+.vs-val-num {{ font-size: 32px; font-weight: 700; line-height: 1; color: var(--dark); }}
+.vs-val-num.win {{ color: var(--accent); }}
+.vs-val-sub {{ font-size: 12px; color: var(--gray-mid); margin-top: 6px; }}
+.vs-val-left {{ background: rgba(27,226,179,.025); }}
+.vs-metric-label {{ text-align: center; padding: 12px 8px; }}
+.vs-metric-label span {{ display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--dark); background: #f5f5f5; padding: 6px 16px; border-radius: 999px; }}
+.vs-note {{ font-size: 12px; color: var(--gray-mid); margin-top: 24px; line-height: 1.5; text-align: center; }}
+
+.advantage-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }}
+.advantage-card {{ padding: 32px 28px; border: 1px solid var(--border-light); border-radius: 16px; background: #fff; display: flex; flex-direction: column; gap: 12px; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }}
+.advantage-card:hover {{ border-color: var(--accent-border); transform: translateY(-3px); box-shadow: 0 12px 40px rgba(0,0,0,.06); }}
+.advantage-title {{ font-size: 18px; font-weight: 700; color: var(--dark); line-height: 1.3; letter-spacing: -.01em; }}
+
+.product-card {{ background: linear-gradient(180deg, #222 0%, #1a1a1a 100%); border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 36px 28px; display: flex; flex-direction: column; gap: 20px; position: relative; overflow: hidden; transition: border-color .2s ease; }}
+.product-card:hover {{ border-color: rgba(27,226,179,.3); }}
+.product-card .h-card {{ color: #fff; }}
+.product-card .body-dark {{ color: rgba(255,255,255,.65); }}
+
+.use-case-item {{ display: flex; gap: 16px; align-items: flex-start; padding: 28px; border: 1px solid var(--border-light); border-radius: 12px; background: #fff; transition: border-color .2s, transform .2s; }}
+.use-case-item:hover {{ border-color: var(--accent-border); transform: translateY(-2px); }}
+.use-case-dot {{ width: 10px; height: 10px; border-radius: 999px; background: var(--accent); flex-shrink: 0; margin-top: 6px; box-shadow: 0 0 10px rgba(27,226,179,.3); }}
+
+.testimonial-card {{ border: 1px solid var(--border-light); border-radius: 12px; padding: 32px; background: #fff; display: flex; flex-direction: column; gap: 16px; }}
+.testimonial-quote {{ font-size: 15px; line-height: 1.6; color: var(--body-muted); font-style: italic; position: relative; padding-left: 20px; }}
+.testimonial-quote::before {{ content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: var(--accent); }}
+.testimonial-attr {{ display: flex; flex-direction: column; gap: 2px; }}
+.testimonial-name {{ font-weight: 600; font-size: 14px; color: var(--dark); }}
+
+.metric-card {{ text-align: center; padding: 24px 16px; border: 1px solid var(--border-light); border-radius: 8px; background: #fff; }}
+
+.card-light {{ background: #fff; border: 1px solid var(--border-light); border-radius: 12px; padding: 32px; }}
+.bullet-list {{ list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }}
+.bullet-list li {{ position: relative; padding-left: 20px; font-size: 14px; line-height: 1.55; color: var(--body-muted); }}
+.bullet-list li::before {{ content: ""; position: absolute; left: 0; top: .65em; width: 7px; height: 7px; border-radius: 999px; background: var(--green-muted); transform: translateY(-50%); }}
+
+.compliance-row {{ display: flex; gap: 12px; flex-wrap: wrap; }}
+.compliance-badge {{ display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; background: rgba(27,226,179,.08); color: var(--accent); border: 1px solid rgba(27,226,179,.2); }}
+
+.cta-panel {{ border-radius: 16px; border: 1.15px solid rgba(255,255,255,.2); background: linear-gradient(#303030 0%, #272727 100%); box-shadow: inset 0 0 9.6px rgba(255,255,255,.1); padding: 56px; display: grid; grid-template-columns: 1.2fr .8fr; gap: 32px; align-items: center; position: relative; z-index: 2; }}
+.cta-panel::after {{ content: ""; position: absolute; right: 8%; top: 10%; width: 260px; height: 260px; border-radius: 999px; background: radial-gradient(circle, rgba(27,226,179,.18), rgba(27,226,179,0)); filter: blur(24px); pointer-events: none; }}
+
+.faq-list {{ display: grid; gap: 16px; max-width: 840px; }}
+.faq-item {{ border: 1px solid var(--border-light); border-radius: 12px; background: #fff; overflow: hidden; }}
+.faq-question {{ padding: 22px 28px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 16px; user-select: none; }}
+.faq-toggle {{ width: 28px; height: 28px; border-radius: 999px; border: 1px solid var(--border-light); display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--gray-mid); flex-shrink: 0; transition: transform .2s ease, background .2s ease; }}
+.faq-answer {{ max-height: 0; overflow: hidden; transition: max-height .35s ease; }}
+.faq-answer-inner {{ padding: 0 28px 24px; }}
+.faq-item.open .faq-answer {{ max-height: 500px; }}
+.faq-item.open .faq-toggle {{ transform: rotate(45deg); background: var(--accent-subtle); border-color: var(--accent-border); color: var(--dark); }}
+
+@media (max-width: 1199px) {{
+  .container {{ padding-left: 48px; padding-right: 48px; }}
+  .section {{ padding: 96px 0; }}
+  .advantage-grid {{ grid-template-columns: repeat(2, 1fr); }}
+  .grid-3 {{ grid-template-columns: repeat(2, 1fr); }}
+  .cta-panel {{ grid-template-columns: 1fr; padding: 40px; }}
+}}
+@media (max-width: 809px) {{
+  .container {{ padding-left: 24px; padding-right: 24px; }}
+  .section {{ padding: 64px 0; }}
+  .hero {{ padding-top: 128px; padding-bottom: 72px; }}
+  .hero::before {{ width: 560px; height: 360px; top: 160px; left: 50%; transform: translateX(-35%); }}
+  .h-display {{ font-size: 36px; }}
+  .grid-3, .grid-2, .advantage-grid {{ grid-template-columns: 1fr; }}
+  .vs-card-header {{ grid-template-columns: 1fr 48px 1fr; }}
+  .vs-metric-row {{ grid-template-columns: 1fr 80px 1fr; }}
+  .vs-val {{ padding: 18px 12px; }}
+  .vs-val-num {{ font-size: 22px; }}
+  .vs-brand-name {{ font-size: 14px; }}
+  .vs-brand-col {{ padding: 18px 16px; gap: 8px; }}
+  .cta-panel {{ grid-template-columns: 1fr; padding: 28px; }}
+}}
 </style>
 </head>
 <body>
-<div class="preview-banner">
-  PREVIEW — Generated by Vizup Soul LP Generator
-</div>
-<main>
+<div style="min-height:100vh;width:100%;overflow-x:clip;background:#fff;">
 {all_sections}
-</main>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded',function(){{
+  document.querySelectorAll('.faq-item').forEach(function(item){{
+    if(item.classList.contains('open')){{
+      var a=item.querySelector('.faq-answer');
+      if(a) a.style.maxHeight=a.scrollHeight+'px';
+    }}
+    item.querySelector('.faq-question').addEventListener('click',function(){{
+      var wasOpen=item.classList.contains('open');
+      item.classList.toggle('open');
+      var ans=item.querySelector('.faq-answer');
+      if(!wasOpen){{ ans.style.maxHeight=ans.scrollHeight+'px'; }}
+      else{{ ans.style.maxHeight='0px'; }}
+    }});
+  }});
+}});
+</script>
 </body>
 </html>"""
 
 
-def _h(text: str) -> str:
-    """HTML-escape helper for preview rendering."""
-    if not text:
-        return ""
-    return (
-        str(text)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+def _parse_bullet_list(body) -> list[str]:
+    """Parse body_copy into a list of items. Handles strings, JSON arrays, and lists of dicts."""
+    if not body:
+        return []
 
+    if isinstance(body, list):
+        items = []
+        for item in body:
+            if isinstance(item, dict):
+                t = item.get("title", item.get("name", item.get("feature", "")))
+                d = item.get("description", item.get("text", item.get("detail", "")))
+                items.append(f"{t}: {d}" if t and d else (t or d or ""))
+            elif isinstance(item, str):
+                items.append(item)
+        return [i for i in items if i]
+
+    if isinstance(body, str) and body.strip().startswith("["):
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, list):
+                return _parse_bullet_list(parsed)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if not isinstance(body, str):
+        return []
+
+    items = []
+    for line in body.split("\n"):
+        line = line.strip()
+        if line.startswith("- "):
+            items.append(line[2:])
+        elif line.startswith("• "):
+            items.append(line[2:])
+    return items if items else [body] if body.strip() else []
+
+
+# ── Download Excel ──
 
 @app.post("/api/lpgen/download-excel")
 async def lpgen_download_excel(request: Request):
-    """Generate an Excel file with Current Copy vs New Copy comparison."""
+    """Single-sheet, structured, client-approval-ready Excel export."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
     import io
+    from datetime import datetime
 
     data = await request.json()
     sections = data.get("sections", [])
-    company_name = data.get("company_name", "Landing Page")
+    brand_name = data.get("brand_name", data.get("company_name", "Brand"))
+    competitor_name = data.get("competitor_name", "Competitor")
+    dt = data.get("data_table", [])
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "LP Copy"
+    ws.title = f"{brand_name} vs {competitor_name}"
 
-    ACCENT = "6C5CE7"
+    # ── Palette ──
+    ACCENT = "1BE2B3"
+    ACCENT_LT = "E6FBF5"
+    DARK = "191919"
+    DARK2 = "2D2D2D"
     WHITE = "FFFFFF"
-    DARK = "1E1E1E"
-    BODY = "374151"
-    MUTED = "6B7280"
-    BG_LIGHT = "F9FAFB"
-    BG_STRIPE = "F3F4F6"
-    ACCENT_LIGHT = "EDE9FE"
+    BODY = "4B5563"
+    MUTED = "9CA3AF"
+    LIGHT = "F9FAFB"
+    LIGHT2 = "F3F4F6"
+    BORDER_C = "E5E7EB"
+    GREEN = "059669"
+    GREEN_BG = "ECFDF5"
+    ORANGE = "D97706"
+    ORANGE_BG = "FFFBEB"
 
-    header_font = Font(bold=True, size=11, color=WHITE)
-    header_fill = PatternFill(start_color=ACCENT, end_color=ACCENT, fill_type="solid")
-    title_font = Font(bold=True, size=14, color=ACCENT)
-    body_font = Font(size=10, color=BODY)
-    label_font = Font(bold=True, size=10, color=DARK)
-    muted_font = Font(size=9, color=MUTED)
-    stripe_fill = PatternFill(start_color=BG_STRIPE, end_color=BG_STRIPE, fill_type="solid")
-    thin_side = Side(style="thin", color="D1D5DB")
-    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    thin = Side(style="thin", color=BORDER_C)
+    bdr = Border(left=thin, right=thin, top=thin, bottom=thin)
+    bdr_b = Border(bottom=Side(style="thin", color=BORDER_C))
     wrap = Alignment(wrap_text=True, vertical="top")
+    ctr = Alignment(horizontal="center", vertical="center")
+    ctr_w = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    ws.merge_cells("A1:F1")
-    ws["A1"] = f"{company_name} — Landing Page Copy"
-    ws["A1"].font = title_font
-    ws.row_dimensions[1].height = 30
+    def fill(c): return PatternFill(start_color=c, end_color=c, fill_type="solid")
+    def rh(r, h): ws.row_dimensions[r].height = h
 
-    headers = ["#", "Section", "Slot", "Current Copy", "New Copy", "Status"]
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=3, column=col, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = thin_border
+    COL_A, COL_B, COL_C, COL_D, COL_E, COL_F = 4, 14, 32, 16, 16, 16
+    ws.column_dimensions["A"].width = COL_A
+    ws.column_dimensions["B"].width = COL_B
+    ws.column_dimensions["C"].width = COL_C
+    ws.column_dimensions["D"].width = COL_D
+    ws.column_dimensions["E"].width = COL_E
+    ws.column_dimensions["F"].width = COL_F
 
-    ws.column_dimensions["A"].width = 6
-    ws.column_dimensions["B"].width = 16
-    ws.column_dimensions["C"].width = 14
-    ws.column_dimensions["D"].width = 50
-    ws.column_dimensions["E"].width = 50
-    ws.column_dimensions["F"].width = 12
+    R = 1  # running row cursor
 
-    row = 4
-    slots = ["headline", "subheadline", "body", "cta_text", "list_items"]
+    # ═══════════════════════════════════════════
+    # HEADER BLOCK
+    # ═══════════════════════════════════════════
+    ws.merge_cells(f"A{R}:F{R}")
+    c = ws.cell(row=R, column=1, value=f"{brand_name} vs {competitor_name}")
+    c.font = Font(size=22, bold=True, color=DARK)
+    c.fill = fill(ACCENT_LT)
+    c.alignment = Alignment(vertical="center", indent=1)
+    rh(R, 56); R += 1
 
-    for sec in sections:
-        current = sec.get("current_copy", {})
-        new_copy = sec.get("new_copy", {})
-        section_type = (sec.get("section_type", "custom") or "").replace("_", " ").title()
-        position = sec.get("position", "")
-        first_row_for_section = True
+    ws.merge_cells(f"A{R}:F{R}")
+    c = ws.cell(row=R, column=1, value=f"{competitor_name} Alternative Landing Page  •  {datetime.now().strftime('%B %d, %Y')}")
+    c.font = Font(size=11, color=MUTED)
+    c.alignment = Alignment(vertical="center", indent=1)
+    rh(R, 26); R += 1
 
-        for slot in slots:
-            cur_val = current.get(slot)
-            new_val = new_copy.get(slot)
-            if cur_val is None and new_val is None:
-                continue
+    # Summary row
+    ws.merge_cells(f"A{R}:F{R}")
+    c = ws.cell(row=R, column=1, value=f"{len(sections)} sections  •  {len(dt)} verified data points")
+    c.font = Font(size=10, bold=True, color=BODY)
+    c.alignment = Alignment(vertical="center", indent=1)
+    c.fill = fill(LIGHT2)
+    rh(R, 26); R += 1
 
-            if isinstance(cur_val, list):
-                cur_val = "\n".join(f"- {v}" for v in cur_val)
-            if isinstance(new_val, list):
-                new_val = "\n".join(f"- {v}" for v in new_val)
+    rh(R, 6); R += 1  # spacer
 
-            ws.cell(row=row, column=1, value=position if first_row_for_section else "").font = label_font
-            ws.cell(row=row, column=2, value=section_type if first_row_for_section else "").font = label_font
-            ws.cell(row=row, column=3, value=slot.replace("_", " ").title()).font = muted_font
-            ws.cell(row=row, column=4, value=cur_val or "").font = body_font
-            ws.cell(row=row, column=5, value=new_val or "").font = body_font
-            ws.cell(row=row, column=6, value="").font = muted_font
+    # ═══════════════════════════════════════════
+    # SECTIONS AT A GLANCE
+    # ═══════════════════════════════════════════
+    ws.merge_cells(f"A{R}:F{R}")
+    c = ws.cell(row=R, column=1, value="SECTIONS OVERVIEW")
+    c.font = Font(size=10, bold=True, color=WHITE)
+    c.fill = fill(DARK)
+    c.alignment = Alignment(vertical="center", indent=1)
+    rh(R, 28); R += 1
 
-            for col in range(1, 7):
-                ws.cell(row=row, column=col).border = thin_border
-                ws.cell(row=row, column=col).alignment = wrap
+    overview_h = ["#", "Section", "Headline", "", "", ""]
+    for ci, h in enumerate(overview_h, 1):
+        if ci <= 3:
+            c = ws.cell(row=R, column=ci, value=h)
+            c.font = Font(size=9, bold=True, color=WHITE)
+            c.fill = fill(DARK2)
+            c.alignment = ctr
+            c.border = bdr
+    ws.merge_cells(f"C{R}:F{R}")
+    rh(R, 24); R += 1
 
-            if row % 2 == 0:
-                for col in range(1, 7):
-                    ws.cell(row=row, column=col).fill = stripe_fill
+    for i, sec in enumerate(sections):
+        c = ws.cell(row=R, column=1, value=i + 1)
+        c.font = Font(size=10, color=BODY); c.alignment = ctr; c.border = bdr
 
-            first_row_for_section = False
-            row += 1
+        c = ws.cell(row=R, column=2, value=sec.get("section_type", "").replace("_", " ").title())
+        c.font = Font(size=10, bold=True, color=DARK); c.border = bdr
 
-        if first_row_for_section:
-            ws.cell(row=row, column=1, value=position).font = label_font
-            ws.cell(row=row, column=2, value=section_type).font = label_font
-            ws.cell(row=row, column=3, value="").font = muted_font
-            ws.cell(row=row, column=4, value="(no copy)").font = muted_font
-            ws.cell(row=row, column=5, value="(no copy)").font = muted_font
-            for col in range(1, 7):
-                ws.cell(row=row, column=col).border = thin_border
-                ws.cell(row=row, column=col).alignment = wrap
-            row += 1
+        ws.merge_cells(f"C{R}:F{R}")
+        c = ws.cell(row=R, column=3, value=sec.get("headline", ""))
+        c.font = Font(size=10, color=BODY); c.alignment = wrap; c.border = bdr
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+        if i % 2 == 0:
+            for ci in [1, 2, 3]:
+                ws.cell(row=R, column=ci).fill = fill(LIGHT)
+        rh(R, 30); R += 1
 
+    rh(R, 12); R += 1  # spacer
+
+    # ═══════════════════════════════════════════
+    # DETAILED COPY — SECTION BY SECTION
+    # ═══════════════════════════════════════════
+    ws.merge_cells(f"A{R}:F{R}")
+    c = ws.cell(row=R, column=1, value="DETAILED COPY")
+    c.font = Font(size=10, bold=True, color=WHITE)
+    c.fill = fill(DARK)
+    c.alignment = Alignment(vertical="center", indent=1)
+    rh(R, 28); R += 1
+
+    for i, sec in enumerate(sections):
+        stype_raw = sec.get("section_type", "section")
+        stype = stype_raw.replace("_", " ").upper()
+        headline = sec.get("headline", "")
+        subheadline = sec.get("subheadline", "")
+        body_raw = sec.get("body_copy", "")
+        comp_rows = sec.get("comparison_rows", [])
+        data_used = sec.get("data_points_used", [])
+        is_faq = stype_raw.lower() == "faq"
+
+        # Normalize body: convert structured arrays to readable text
+        body = body_raw
+        if isinstance(body, str) and body.strip().startswith("["):
+            try:
+                body = json.loads(body)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        if isinstance(body, list) and not is_faq:
+            parts = []
+            for item in body:
+                if isinstance(item, dict):
+                    t = item.get("title", item.get("name", item.get("feature", "")))
+                    d = item.get("description", item.get("text", item.get("detail", "")))
+                    if t and d:
+                        parts.append(f"- {t} — {d}")
+                    elif t:
+                        parts.append(f"- {t}")
+                    elif d:
+                        parts.append(f"- {d}")
+                elif isinstance(item, str):
+                    parts.append(f"- {item}")
+            body = "\n".join(parts) if parts else json.dumps(body_raw, indent=2, ensure_ascii=False)
+
+        # ── Section banner ──
+        ws.merge_cells(f"A{R}:F{R}")
+        c = ws.cell(row=R, column=1, value=f"  {i+1}.  {stype}")
+        c.font = Font(size=11, bold=True, color=WHITE)
+        c.fill = fill(DARK2)
+        c.alignment = Alignment(vertical="center")
+        rh(R, 30); R += 1
+
+        # ── Headline ──
+        c = ws.cell(row=R, column=2, value="Headline")
+        c.font = Font(size=9, bold=True, color=MUTED)
+        c.fill = fill(ACCENT_LT)
+        ws.cell(row=R, column=1).fill = fill(ACCENT_LT)
+        ws.merge_cells(f"C{R}:F{R}")
+        c = ws.cell(row=R, column=3, value=headline)
+        c.font = Font(size=14, bold=True, color=DARK)
+        c.alignment = wrap
+        c.fill = fill(ACCENT_LT)
+        rh(R, 36); R += 1
+
+        # ── Subheadline ──
+        if subheadline:
+            c = ws.cell(row=R, column=2, value="Subtitle")
+            c.font = Font(size=9, bold=True, color=MUTED)
+            ws.merge_cells(f"C{R}:F{R}")
+            c = ws.cell(row=R, column=3, value=subheadline)
+            c.font = Font(size=11, italic=True, color=BODY)
+            c.alignment = wrap
+            rh(R, 28); R += 1
+
+        # ── Body copy / FAQ ──
+        if is_faq and isinstance(body, list) and body and isinstance(body[0], dict):
+            ws.cell(row=R, column=2, value="FAQ").font = Font(size=9, bold=True, color=MUTED)
+
+            c = ws.cell(row=R, column=3, value="Question")
+            c.font = Font(size=9, bold=True, color=WHITE)
+            c.fill = fill(DARK2); c.alignment = ctr; c.border = bdr
+
+            c = ws.cell(row=R, column=4, value="Answer")
+            c.font = Font(size=9, bold=True, color=WHITE)
+            c.fill = fill(DARK2); c.alignment = ctr; c.border = bdr
+            rh(R, 22); R += 1
+
+            for fq in body:
+                if not isinstance(fq, dict):
+                    continue
+                q = fq.get("q", fq.get("question", ""))
+                a = fq.get("a", fq.get("answer", ""))
+
+                c = ws.cell(row=R, column=3, value=q)
+                c.font = Font(size=10, bold=True, color=DARK)
+                c.border = bdr; c.alignment = wrap
+
+                c = ws.cell(row=R, column=4, value=a)
+                c.font = Font(size=10, color=BODY)
+                c.border = bdr; c.alignment = wrap
+
+                a_lines = a.count("\n") + 1 if a else 1
+                rh(R, max(32, min(a_lines * 15, 120))); R += 1
+        elif body:
+            body_str = body if isinstance(body, str) else json.dumps(body, indent=2, ensure_ascii=False)
+            c = ws.cell(row=R, column=2, value="Copy")
+            c.font = Font(size=9, bold=True, color=MUTED)
+            ws.merge_cells(f"C{R}:F{R}")
+            c = ws.cell(row=R, column=3, value=body_str)
+            c.font = Font(size=10, color=BODY)
+            c.alignment = wrap
+            lines = body_str.count("\n") + 1
+            rh(R, max(40, min(lines * 15, 180))); R += 1
+
+        # ── Comparison rows ──
+        if comp_rows:
+            comp_h = ["", "", "Feature", brand_name, competitor_name, ""]
+            for ci, ch in enumerate(comp_h, 1):
+                c = ws.cell(row=R, column=ci, value=ch)
+                if ci >= 3 and ci <= 5:
+                    c.font = Font(size=9, bold=True, color=WHITE)
+                    c.fill = fill(DARK2)
+                    c.alignment = ctr
+                    c.border = bdr
+            ws.cell(row=R, column=2, value="Comparison").font = Font(size=9, bold=True, color=MUTED)
+            rh(R, 22); R += 1
+
+            for cr in comp_rows:
+                if not isinstance(cr, dict):
+                    continue
+                feat = cr.get("feature", cr.get("label", ""))
+                bv = cr.get("brand_value", cr.get("brand", ""))
+                cv = cr.get("competitor_value", cr.get("competitor", ""))
+
+                c = ws.cell(row=R, column=3, value=feat)
+                c.font = Font(size=10, bold=True, color=DARK); c.border = bdr; c.alignment = wrap
+
+                c = ws.cell(row=R, column=4, value=bv)
+                c.font = Font(size=10, bold=True, color=GREEN)
+                c.fill = fill(GREEN_BG); c.border = bdr; c.alignment = ctr_w
+
+                c = ws.cell(row=R, column=5, value=cv)
+                c.font = Font(size=10, color=BODY); c.border = bdr; c.alignment = ctr_w
+
+                rh(R, 24); R += 1
+
+        # ── Data references ──
+        if data_used:
+            c = ws.cell(row=R, column=2, value="Sources")
+            c.font = Font(size=9, bold=True, color=MUTED)
+            ws.merge_cells(f"C{R}:F{R}")
+            c = ws.cell(row=R, column=3, value=", ".join(data_used))
+            c.font = Font(size=9, italic=True, color=MUTED)
+            c.alignment = wrap
+            rh(R, 20); R += 1
+
+        # ── Section divider ──
+        for ci in range(1, 7):
+            ws.cell(row=R, column=ci).border = Border(bottom=Side(style="thin", color=BORDER_C))
+        rh(R, 10); R += 1
+
+    rh(R, 12); R += 1  # spacer
+
+    # ═══════════════════════════════════════════
+    # DATA SOURCES TABLE
+    # ═══════════════════════════════════════════
+    if dt:
+        ws.merge_cells(f"A{R}:F{R}")
+        c = ws.cell(row=R, column=1, value=f"DATA SOURCES  —  {len(dt)} verified data points")
+        c.font = Font(size=10, bold=True, color=WHITE)
+        c.fill = fill(DARK)
+        c.alignment = Alignment(vertical="center", indent=1)
+        rh(R, 28); R += 1
+
+        ws.merge_cells(f"A{R}:F{R}")
+        c = ws.cell(row=R, column=1, value="Every fact above is sourced from published websites. URLs provided for verification.")
+        c.font = Font(size=9, italic=True, color=MUTED)
+        c.alignment = Alignment(vertical="center", indent=1)
+        rh(R, 20); R += 1
+
+        dt_h = ["Data Point", "Category", brand_name, "Source URL", competitor_name, "Source URL"]
+        for ci, h in enumerate(dt_h, 1):
+            c = ws.cell(row=R, column=ci, value=h)
+            c.font = Font(size=9, bold=True, color=WHITE)
+            c.fill = fill(DARK2)
+            c.alignment = ctr
+            c.border = bdr
+        rh(R, 24); R += 1
+
+        for i, r in enumerate(dt):
+            vals = [
+                (r.get("data_point", ""), Font(size=10, bold=True, color=DARK)),
+                (r.get("category", ""), Font(size=9, color=MUTED)),
+                (r.get("brand_value", ""), Font(size=10, color=DARK)),
+                (r.get("brand_source", ""), Font(size=8, color=MUTED)),
+                (r.get("competitor_value", ""), Font(size=10, color=DARK)),
+                (r.get("competitor_source", ""), Font(size=8, color=MUTED)),
+            ]
+            for ci, (val, font) in enumerate(vals, 1):
+                c = ws.cell(row=R, column=ci, value=val)
+                c.font = font; c.border = bdr; c.alignment = wrap
+            if i % 2 == 0:
+                for ci in range(1, 7):
+                    ws.cell(row=R, column=ci).fill = fill(LIGHT)
+            rh(R, 22); R += 1
+
+    # ── Print setup ──
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.print_title_rows = "1:3"
+
+    try:
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Excel generation failed: {str(e)}"}, status_code=500)
+
+    filename = f"{brand_name.replace(' ', '_')}_vs_{competitor_name.replace(' ', '_')}_LP_Copy.xlsx"
     return Response(
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="lp_copy_{company_name.replace(" ", "_")}.xlsx"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
+# ── DEAD CODE REMOVED ──
+# Old endpoints removed: extract-content-reference, extract-schema, build-knowledge,
+# save-knowledge, knowledge-hubs CRUD, canvas-edit, 5-stage pipeline
+# (Research, Approach, Storyboard, Copywriting, QA), _BENCHMARK_INTELLIGENCE
+
+
+_LPGEN_OLD_STUB = None  # end of LP Generator v2
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8500)
